@@ -70,7 +70,6 @@ loki.source.journal "logs_integrations_integrations_node_exporter_journal_scrape
   // Send logs to the local Loki instance
   forward_to    = [loki.write.local.receiver]
 }
-
 // Define which log files to collect for node_exporter
 local.file_match "logs_integrations_integrations_node_exporter_direct_scrape" {
   path_targets = [{
@@ -82,6 +81,15 @@ local.file_match "logs_integrations_integrations_node_exporter_direct_scrape" {
     instance    = constants.hostname,
     // Add job label for logs
     job         = "integrations/node_exporter",
+  }]
+}
+
+local.file_match "logs_grype_json" {
+  path_targets = [{ 
+    __address__ = "localhost",
+    __path__ = "/var/log/grype/grype_scan.json",
+    instance = constants.hostname,
+    job = "security/cve_scanner",
   }]
 }
 
@@ -114,11 +122,40 @@ discovery.relabel "logs_integrations_integrations_node_exporter_journal_scrape" 
   }
 }
 
+//Grype relabeling
+discovery.relabel "logs_grype_json" {
+  targets = local.file_match.logs_grype_json.targets
+
+  rule {
+    source_labels = ["__line__"]
+    regex         = ".*\"severity\":\"(Critical|High|Medium|Low)\""
+    target_label  = "severity"
+  }
+
+  rule {
+    source_labels = ["__line__"]
+    regex         = ".*\"cve\":\"([^\"]+)\""
+    target_label  = "cve_id"
+  }
+
+  rule {
+    source_labels = ["__line__"]
+    regex         = ".*\"package\":\"([^\"]+)\""
+    target_label  = "package"
+  }
+}
+
+
 // Collect logs from files for node_exporter
 loki.source.file "logs_integrations_integrations_node_exporter_direct_scrape" {
   // Use targets defined in local.file_match
   targets    = local.file_match.logs_integrations_integrations_node_exporter_direct_scrape.targets
   // Send logs to the local Loki instance
+  forward_to = [loki.write.local.receiver]
+}
+// Grype
+loki.source.file "logs_grype_json" {
+  targets    = discovery.relabel.logs_grype_json.output
   forward_to = [loki.write.local.receiver]
 }
 
