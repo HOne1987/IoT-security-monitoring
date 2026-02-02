@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  # --- THE PRODUCT: Universal IoT Agent ---
+  iot-device:
+    build: ./IoT_Device
+    container_name: ubi-secure-node-01
+    ports:
+      - "8000:8000"
+    networks:
+      - iot-secure-net
+    restart: unless-stopped
+
+  # --- THE HUB: Prometheus Database ---
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus-hub
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - iot-secure-net
+
+  # --- THE DASHBOARD: Grafana ---
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - iot-secure-net
+    depends_on:
+      - prometheus
+
+networks:
+  iot-secure-net:
+    driver: bridge

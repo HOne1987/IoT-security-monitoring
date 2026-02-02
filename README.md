@@ -1,10 +1,6 @@
 # IoT-security-monitoring
-This repository is for my MSc -in Cybersecurity- project that's about monitoring the security of IoT devices using Grafana Alloy, Grafana Loki, Prometheus and Grafana in order to monitor and visualize data that correlate to each IoT device.
-The data that should be useful for monitoring each IoT device's security status would be as follows:
--Systemd Journals
--System logs (e.g. boot.log)
--Grype/syft analysis of CVEs found in packages that are installed in the system (WIP)
--Overall Usage of System Resources (e.g. CPU Usage, RAM usage, etc..)
+This repository is for my MSc -in Cybersecurity- project that's about monitoring the security of IoT devices using Prometheus and Grafana, the python file "IoT_Device/universal_agent.py" exports metrics of the IoT device for prometheus to get the data as well as a simulated attack that happens with a chance of 10% to be able to define alerts that coorelate to these attacks and their effect on system resources. As well as a simulated CO2 sensor which also has a chance of 5% to provide inaccurate readings for us to detect and visualize as well.
 
-The repository includes two folders which help show the user what to install in a server/client architecture, the clients would be the IoT devices and the Server is the main server used for analysis.
-These folders mainly contain Grafana Alloy/Loki configs as well as the main Grafana server's Configuration for visualization of the previously explained security features for each IoT device.
+## How to use
+You can easily spin up the containers defined in the docker-compose file using the following command "docker-compose up --build" and when a chance of anomaly happens it'll show in the terminal.
+The grafana instance is accessible at localhost:3000 and prometheus can be connected using the container's ip address. a grafana JSON file is also provided for ease of importing an already defined dashboard which shows the system's metrics and anomaly metrics as well.
