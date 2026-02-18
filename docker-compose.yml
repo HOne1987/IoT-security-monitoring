@@ -30,11 +30,21 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      # 1. Persist the database (Save users/passwords/dashboards manually created)
+      - grafana_storage:/var/lib/grafana
+      # 2. Provisioning: Auto-connect Prometheus
+      - ./Hub_Configs/grafana/provisioning:/etc/grafana/provisioning
     networks:
       - iot-secure-net
     depends_on:
       - prometheus
 
+
 networks:
   iot-secure-net:
     driver: bridge
+
+# Grafana storage volume for configuration persistence
+volumes:
+  grafana_storage:

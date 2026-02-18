@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 0,
+  "id": 1,
   "links": [],
   "panels": [
     {
@@ -37,7 +37,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "afc0v8g8m5xq8b"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -136,7 +136,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "afc0v8g8m5xq8b"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -199,7 +199,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "afc0v8g8m5xq8b"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -283,7 +283,7 @@
         {
           "editorMode": "builder",
           "expr": "rate(system_network_transmit_bytes[$__rate_interval])",
-          "legendFormat": "__auto",
+          "legendFormat": "Network Traffic (in/out)",
           "range": true,
           "refId": "A"
         }
@@ -307,7 +307,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "afc0v8g8m5xq8b"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -320,12 +320,17 @@
                 "0": {
                   "color": "green",
                   "index": 0,
-                  "text": "Secure"
+                  "text": "Benign"
                 },
                 "1": {
-                  "color": "red",
+                  "color": "dark-red",
                   "index": 1,
-                  "text": "Attack"
+                  "text": "Mirai/DDoS"
+                },
+                "2": {
+                  "color": "yellow",
+                  "index": 2,
+                  "text": "BruteForce"
                 }
               },
               "type": "value"
@@ -340,7 +345,7 @@
               },
               {
                 "color": "red",
-                "value": 80
+                "value": 1
               }
             ]
           }
@@ -375,19 +380,19 @@
       "targets": [
         {
           "editorMode": "builder",
-          "expr": "iot_security_attack_indicator",
+          "expr": "iot_attack_type_code",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Attack Indicator",
+      "title": "Attack Type",
       "type": "stat"
     },
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "afc0v8g8m5xq8b"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -455,7 +460,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "afc0v8g8m5xq8b"
+        "uid": "PBFA97CFB590B2093"
       },
       "fieldConfig": {
         "defaults": {
@@ -516,7 +521,7 @@
           "refId": "A"
         }
       ],
-      "title": "Login Attack Attempts",
+      "title": "Login Attack Attempts (in 1 Minute)",
       "type": "bargauge"
     }
   ],
@@ -533,6 +538,6 @@
   "timepicker": {},
   "timezone": "browser",
   "title": "IoT Metrics",
-  "uid": "adlcs8l",
-  "version": 11
+  "uid": "IoT_Monitoring_Dashboard",
+  "version": 10
 }
