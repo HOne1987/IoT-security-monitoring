@@ -39,6 +39,16 @@ services:
       - iot-secure-net
     depends_on:
       - prometheus
+  # --- THE ANOMALY DETECTION ---
+  ai-analyzer:
+    build: ./AI_Analyzer
+    container_name: ai-anomaly-detector
+    ports:
+      - "8001:8001"
+    networks:
+      - iot-secure-net
+    depends_on:
+      - prometheus
 
 
 networks:

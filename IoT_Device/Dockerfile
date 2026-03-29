@@ -16,6 +16,8 @@ RUN useradd -r -s /bin/false -u 1001 iotuser
 # 3. Application Setup
 WORKDIR /app
 COPY universal_agent.py /app/
+COPY SensorData500Rows.csv /app/
+COPY temp_00001_20221019140448.pcap_500_rows.csv /app/
 
 # 4. Permissions
 RUN chown -R iotuser:iotuser /app

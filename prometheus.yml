@@ -7,3 +7,7 @@ scrape_configs:
       - targets: ['ubi-secure-node-01:8000']
         labels:
           device_group: 'residential-beta'
+  - job_name: 'ai-analyzer'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['ai-analyzer:8001']

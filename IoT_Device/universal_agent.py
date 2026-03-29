@@ -1,113 +1,87 @@
 import time
-import random
-import psutil
+import csv
+import os
 from prometheus_client import start_http_server, Gauge, Counter
 
 # --- Configuration ---
 DEVICE_ID = "ubi-secure-node-01"
-UPDATE_INTERVAL = 5
+PHYSICAL_DATASET = 'SensorData500Rows.csv'
+CYBER_DATASET = 'temp_00001_20221019140448.pcap_500_rows.csv'
 
-# --- Metrics Definition ---
-# 1. Real System Metrics (The "Product")
-REAL_CPU_USAGE = Gauge('system_cpu_usage_percent', 'Real CPU usage', ['device_id'])
-REAL_RAM_USAGE = Gauge('system_ram_usage_bytes', 'Real RAM usage', ['device_id'])
-REAL_RAM_TOTAL = Gauge('system_ram_total_bytes', 'Total system RAM', ['device_id'])
-NET_BYTES_SENT = Gauge('system_network_transmit_bytes', 'Network bytes sent', ['device_id'])
+# We inject the headers dynamically since the dataset stripped them out!
+PHYSICAL_HEADERS = [
+    "Timestamp", "DevID", "DevIP", "Temp", "Humidity", "PIR", "NoiseL", "NoiseM",
+    "NoiseH", "NoiseA", "AirQuality", "Accelero", "Gyro", "Pressure", "Lux", "Prox",
+    "Motion", "MassPM1.0", "MassPM2.5", "MassPM4.0", "MassPM10", "NumPM0.5",
+    "NumPM1.0", "NumPM2.5", "NumPM4.0", "NumPM10", "TPM"
+]
 
-# 2. Scientific Simulation Metrics (The "CicIoT2023" Data)
-# We override the real network/cpu data with simulated values when "Attack Mode" is on
-# to prove we can detect the *patterns* defined in the dataset.
-SIM_ATTACK_TYPE = Gauge('iot_attack_type_code', '0=Benign, 1=Mirai/DDoS, 2=BruteForce', ['device_id'])
+# --- 1. Physical Metrics (From Master SensorData) ---
+REAL_TEMP = Gauge('iot_physical_temperature_c', 'Real dataset temperature', ['device_ip'])
+REAL_HUMIDITY = Gauge('iot_physical_humidity_percent', 'Real dataset humidity', ['device_ip'])
+REAL_PRESSURE = Gauge('iot_physical_pressure_hpa', 'Real dataset pressure', ['device_ip'])
 
-# 3. Safety Metrics
-SIM_CO2_LEVEL = Gauge('iot_sensor_co2_ppm', 'Simulated CO2 levels', ['device_id', 'room'])
+# --- 2. Cyber Metrics (From PCAP CSV) ---
+CYBER_PACKET_BYTES = Gauge('iot_cyber_packet_size_bytes', 'Size of the network packet', ['protocol', 'source', 'destination'])
+CYBER_PACKET_COUNTER = Counter('iot_cyber_packets_total', 'Total packets processed', ['protocol'])
 
-# 4. Security Counters
-LOGIN_ATTEMPTS = Counter('iot_security_login_attempts_total', 'Total login attempts', ['device_id', 'status'])
+def replay_datasets():
+    """Reads both the Headerless Physical CSV and the Cyber CSV simultaneously."""
+    if not os.path.exists(PHYSICAL_DATASET) or not os.path.exists(CYBER_DATASET):
+        print("Error: Dataset CSV files not found.")
+        time.sleep(5)
+        return
 
-# --- CICIoT2023 ATTACK PROFILES ---
-# Reference: High-level behavior extracted from CicIoT2023 CSV features
-# (Packet rates, CPU load correlation, and Connection attempts)
+    print(f"▶️ Starting Dual-Dataset Replay (Logical Sync)...")
 
-def get_benign_behavior():
-    """Profile: Normal Smart Home Traffic"""
-    # Low, intermittent traffic (Smart bulb sending keep-alive)
-    sim_cpu = random.uniform(1, 5)          # Idle CPU
-    sim_net = random.uniform(100, 5000)     # Low Bytes/sec
-    sim_logins = 0                          # No failed logins
-    code = 0
-    return sim_cpu, sim_net, sim_logins, code
+    with open(PHYSICAL_DATASET, 'r') as phys_file, open(CYBER_DATASET, 'r') as cyber_file:
+        # phys_reader is a standard reader because there are no headers in the file
+        phys_reader = csv.reader(phys_file)
+        # cyber_reader is a DictReader because it has headers
+        cyber_reader = csv.DictReader(cyber_file)
 
-def get_mirai_behavior():
-    """Profile: Mirai Botnet / UDP Flood"""
-    # Matches CicIoT2023 'DDoS-UDP_Flood' & 'Mirai-UDPPlain'
-    # Characteristic: Extremely high 'flow_packets_s'
+        # zip() pairs them line-by-line logically
+        for phys_row_raw, cyber_row in zip(phys_reader, cyber_reader):
 
-    sim_cpu = random.uniform(80, 100)       # CPU Spikes due to packet generation load
-    sim_net = random.uniform(5000000, 15000000) # 5MB - 15MB/sec (Massive spike)
-    sim_logins = 0
-    code = 1
-    return sim_cpu, sim_net, sim_logins, code
+            # --- PROCESS PHYSICAL ROW ---
+            # Map the raw list to our 27 headers
+            phys_row = dict(zip(PHYSICAL_HEADERS, phys_row_raw))
 
-def get_bruteforce_behavior():
-    """Profile: Dictionary Attack / Brute Force"""
-    # Matches CicIoT2023 'BruteForce-Web'
-    # Characteristic: High 'syn_flag_count' (connection attempts), Low 'flow_bytes'
+            dev_ip = phys_row.get('DevIP', 'Unknown')
 
-    sim_cpu = random.uniform(10, 20)        # Slight CPU increase (processing auth requests)
-    sim_net = random.uniform(20000, 50000)  # Moderate traffic (Header data only)
-    sim_logins = random.randint(5, 20)      # 5-20 Fails PER SECOND
-    code = 2
-    return sim_cpu, sim_net, sim_logins, code
+            try:
+                # Extract and push the physical safety metrics
+                REAL_TEMP.labels(device_ip=dev_ip).set(float(phys_row.get('Temp', 0)))
+                REAL_HUMIDITY.labels(device_ip=dev_ip).set(float(phys_row.get('Humidity', 0)))
+                REAL_PRESSURE.labels(device_ip=dev_ip).set(float(phys_row.get('Pressure', 0)))
+            except ValueError:
+                pass
 
-def collect_metrics():
-    # 1. Decide on the Scenario (Time-based for demo purposes)
-    # 0-30s: Benign | 30-45s: Mirai | 45-60s: Brute Force
-    current_second = int(time.time()) % 60
+            # --- PROCESS CYBER ROW ---
+            protocol = cyber_row.get('_ws.col.Protocol', 'UNKNOWN')
+            length_str = cyber_row.get('_ws.col.Length', '0')
+            src_ip = cyber_row.get('_ws.col.Source', '0.0.0.0')
+            dst_ip = cyber_row.get('_ws.col.Destination', '0.0.0.0')
 
-    if current_second < 30:
-        cpu, net, logins, code = get_benign_behavior()
-        # print(f"[{DEVICE_ID}] Status: BENIGN (Normal Operation)")
-    elif current_second < 45:
-        cpu, net, logins, code = get_mirai_behavior()
-        print(f"[{DEVICE_ID}] ⚠️  Status: MIRAI BOTNET ATTACK DETECTED")
-    else:
-        cpu, net, logins, code = get_bruteforce_behavior()
-        print(f"[{DEVICE_ID}] ⚠️  Status: BRUTE FORCE ATTACK DETECTED")
+            try:
+                packet_size = float(length_str)
+                CYBER_PACKET_BYTES.labels(protocol=protocol, source=src_ip, destination=dst_ip).set(packet_size)
+                CYBER_PACKET_COUNTER.labels(protocol=protocol).inc()
+            except ValueError:
+                packet_size = 0
 
-    # 2. Push Metrics to Prometheus
-    # Note: We overwrite "Real" CPU with "Simulated" CPU during attacks
-    # because we need to prove Grafana ALERTS work.
+            # Print to terminal
+            print(f"[PHYSICAL - {dev_ip}] Temp: {phys_row.get('Temp')}°C  |  [CYBER] {protocol} Packet: {packet_size} bytes")
 
-    # Get Real RAM (We can keep this real)
-    mem = psutil.virtual_memory()
-    REAL_RAM_USAGE.labels(device_id=DEVICE_ID).set(mem.used)
-    REAL_RAM_TOTAL.labels(device_id=DEVICE_ID).set(mem.total)
+            time.sleep(1) # Replay at 1 row per second
 
-    # Set the Profile Data
-    REAL_CPU_USAGE.labels(device_id=DEVICE_ID).set(cpu)
-    NET_BYTES_SENT.labels(device_id=DEVICE_ID).set(net)
-    SIM_ATTACK_TYPE.labels(device_id=DEVICE_ID).set(code)
-
-    # Handle Logins (Counter needs to increment)
-    if logins > 0:
-        for _ in range(logins):
-            LOGIN_ATTEMPTS.labels(device_id=DEVICE_ID, status='failed').inc()
-
-    # Safety Simulation (Independent of Cyber Attack)
-    # 5% chance of CO2 hazard
-    co2 = random.uniform(400, 800)
-    if random.random() > 0.95:
-        co2 = random.uniform(2000, 5000)
-    SIM_CO2_LEVEL.labels(device_id=DEVICE_ID, room='kitchen').set(co2)
+    print("🔁 Replay finished. Restarting tape...")
 
 def main():
-    print(f"Starting CicIoT2023-Based Simulator on port 8000...")
+    print(f"Starting 100% Dataset-Driven Agent on port 8000...")
     start_http_server(8000)
-
     while True:
-        collect_metrics()
-        time.sleep(UPDATE_INTERVAL)
+        replay_datasets()
 
 if __name__ == '__main__':
     main()
