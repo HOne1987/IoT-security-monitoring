@@ -66,6 +66,21 @@ def replay_datasets():
             try:
                 packet_size = float(length_str)
                 CYBER_PACKET_BYTES.labels(protocol=protocol, source=src_ip, destination=dst_ip).set(packet_size)
+
+                # --- NEW VOLUMETRIC FLOOD LOGIC ---
+                if src_ip == '198.51.100.44':
+                    # If it's our injected attacker, simulate a massive flood (5000 packets per second)
+                    CYBER_PACKET_COUNTER.labels(protocol=protocol).inc(5000)
+                else:
+                    # Normal background traffic
+                    CYBER_PACKET_COUNTER.labels(protocol=protocol).inc(1)
+
+            except ValueError:
+                packet_size = 0
+
+            try:
+                packet_size = float(length_str)
+                CYBER_PACKET_BYTES.labels(protocol=protocol, source=src_ip, destination=dst_ip).set(packet_size)
                 CYBER_PACKET_COUNTER.labels(protocol=protocol).inc()
             except ValueError:
                 packet_size = 0
