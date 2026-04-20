@@ -1,81 +1,91 @@
 import time
 import requests
-import pandas as pd
+import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from prometheus_client import start_http_server, Gauge
 
 # --- Configuration ---
 PROMETHEUS_URL = 'http://prometheus:9090/api/v1/query'
-UPDATE_INTERVAL = 5 # Check every 5 seconds
+UPDATE_INTERVAL = 5
+WARMUP_PERIOD_CHECKS = 12  # 12 checks * 5 seconds = 60 seconds of learning
 
-# --- Metrics to Expose ---
+# --- Metrics ---
 AI_ANOMALY_SCORE = Gauge('ai_anomaly_score', 'AI Anomaly Score (1 = Threat, 0 = Normal)')
 
-# --- 1. Scientific Machine Learning Initialization ---
-print("Initializing Scaled Isolation Forest Model...")
-
-# BASELINE CALIBRATION:
-# Normal IoT background PPS is very low (~1-5).
-# Our simulated attack spike (5000 packets / 60 seconds) calculates to ~83.3 PPS.
-baseline_df = pd.DataFrame({
-    'temp': [35.2, 35.1, 35.3, 35.0, 35.2, 60.0, 35.1], # 60.0 is the physical anomaly
-    'pps':  [1.5,  2.0,  1.2,  1.8,  1.6,  85.0, 1.5]   # 85.0 is the simulated DDoS PPS
-})
-
-# FEATURE SCALING:
-# This fixes the "Outlier Shadowing" problem. It mathematically normalizes
-# temperature (tens) and PPS (thousands) so one doesn't overpower the other.
 scaler = StandardScaler()
-scaled_baseline = scaler.fit_transform(baseline_df)
+# contamination=0.01 means we only expect 1% of data to be severe anomalies (prevents over-sensitivity)
+model = IsolationForest(contamination=0.03, random_state=42)
 
-# Initialize the Isolation Forest
-model = IsolationForest(contamination=0.15, random_state=42)
-model.fit(scaled_baseline)
+baseline_data = []
+is_trained = False
 
 def fetch_metric(query):
-    """Pulls the latest value of a specific PromQL query from Prometheus."""
     try:
         response = requests.get(PROMETHEUS_URL, params={'query': query})
         results = response.json().get('data', {}).get('result', [])
         if results:
             return float(results[0]['value'][1])
-    except Exception as e:
+    except Exception:
         pass
     return 0.0
 
 def analyze():
-    # 2. Fetch live data using proper Cyber-Physical queries
+    global is_trained, baseline_data
+
+    # Using [1] instead of [3] to ensure we read Temperature, not Noise!
     temp = fetch_metric('iot_physical_temperature_c{device_ip="10.11.12.17"}')
+    pps = fetch_metric('sum(irate(iot_cyber_packets_total[1m]))')
 
-    # NEW QUERY: Packets Per Second (PPS) over a 1-minute sliding window
-    # This specifically addresses the supervisor's request to detect volumetric floods.
-    pps = fetch_metric('sum(rate(iot_cyber_packets_total[1m]))')
-
-    # Wait for Prometheus to start returning data
     if temp == 0.0 and pps == 0.0:
         return
 
-    # 3. Apply the exact same scaling to the live data
-    live_df = pd.DataFrame({'temp': [temp], 'pps': [pps]})
-    scaled_live = scaler.transform(live_df)
+    # --- PHASE 1: DYNAMIC WARM-UP & TRAINING ---
+    if not is_trained:
+        baseline_data.append([temp, pps])
+        # flush=True forces Docker to print to the terminal immediately!
+        print(f"[WARM-UP {len(baseline_data)}/{WARMUP_PERIOD_CHECKS}] Learning environment... Temp: {temp:.1f}, PPS: {pps:.1f}", flush=True)
 
-    # 4. Predict
+        if len(baseline_data) >= WARMUP_PERIOD_CHECKS:
+            print("\n[AI] Warm-up complete! Fitting Scaler and Isolation Forest to real environment data...", flush=True)
+            # Train the AI on the actual data we just collected
+            np_baseline = np.array(baseline_data)
+            scaler.fit(np_baseline)
+            scaled_baseline = scaler.transform(np_baseline)
+            model.fit(scaled_baseline)
+            is_trained = True
+            print("[AI] Training Complete. Switching to active Threat Detection Mode.\n", flush=True)
+        return
+
+
+    # --- PHASE 2: ACTIVE THREAT DETECTION ---
+    scaled_live = scaler.transform([[temp, pps]])
+
+    # Start the stopwatch
+    start_time = time.perf_counter()
+
     prediction = model.predict(scaled_live)[0]
     raw_score = model.decision_function(scaled_live)[0]
 
-    # Convert to binary for Grafana
+    # Stop the stopwatch
+    end_time = time.perf_counter()
+
+    # Calculate inference time in milliseconds
+    inference_time_ms = (end_time - start_time) * 1000
+
     score = 1 if prediction == -1 else 0
     AI_ANOMALY_SCORE.set(score)
 
-    # Output to terminal
     status = "🚨 THREAT DETECTED" if score == 1 else "✅ NORMAL"
-    print(f"[AI] Temp: {temp:.1f}°C | PPS: {pps:.1f} pkts/sec | ML Score: {raw_score:.3f} | {status}")
+    print(f"[AI] Temp: {temp:.1f}°C | PPS: {pps:.1f} | ML Score: {raw_score:.3f} | Latency: {inference_time_ms:.2f}ms | {status}", flush=True)
 
 if __name__ == '__main__':
-    print("Starting Scaled AI Anomaly Detector Microservice on port 8001...")
+    print("Starting Adaptive AI Anomaly Detector...", flush=True)
     start_http_server(8001)
-    time.sleep(10) # Buffer for Prometheus boot-up
+
+    # Give Prometheus a few seconds to boot and start scraping
+    time.sleep(10)
+
     while True:
         analyze()
         time.sleep(UPDATE_INTERVAL)

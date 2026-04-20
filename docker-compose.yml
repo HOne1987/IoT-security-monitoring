@@ -9,6 +9,8 @@ services:
       - "8000:8000"
     networks:
       - iot-secure-net
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped
 
   # --- THE HUB: Prometheus Database ---

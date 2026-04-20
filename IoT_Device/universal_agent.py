@@ -1,102 +1,113 @@
-import time
 import csv
-import os
+import time
 from prometheus_client import start_http_server, Gauge, Counter
 
 # --- Configuration ---
-DEVICE_ID = "ubi-secure-node-01"
-PHYSICAL_DATASET = 'SensorData500Rows.csv'
-CYBER_DATASET = 'temp_00001_20221019140448.pcap_500_rows.csv'
+PHYSICAL_CSV = '/app/data/SensorData500Rows.csv'
+CYBER_CSV = '/app/data/temp_00001_20221019140448.pcap_35000_rows.csv'
+PROMETHEUS_PORT = 8000
 
-# We inject the headers dynamically since the dataset stripped them out!
-PHYSICAL_HEADERS = [
-    "Timestamp", "DevID", "DevIP", "Temp", "Humidity", "PIR", "NoiseL", "NoiseM",
-    "NoiseH", "NoiseA", "AirQuality", "Accelero", "Gyro", "Pressure", "Lux", "Prox",
-    "Motion", "MassPM1.0", "MassPM2.5", "MassPM4.0", "MassPM10", "NumPM0.5",
-    "NumPM1.0", "NumPM2.5", "NumPM4.0", "NumPM10", "TPM"
-]
+# --- Metrics ---
+REAL_TEMP = Gauge('iot_physical_temperature_c', 'Physical Temp', ['device_ip'])
+CYBER_PACKET_COUNTER = Counter('iot_cyber_packets_total', 'Packet Count', ['protocol'])
+CYBER_PACKET_BYTES = Gauge('iot_cyber_packet_size_bytes', 'Latest Packet Size', ['protocol', 'source', 'destination'])
 
-# --- 1. Physical Metrics (From Master SensorData) ---
-REAL_TEMP = Gauge('iot_physical_temperature_c', 'Real dataset temperature', ['device_ip'])
-REAL_HUMIDITY = Gauge('iot_physical_humidity_percent', 'Real dataset humidity', ['device_ip'])
-REAL_PRESSURE = Gauge('iot_physical_pressure_hpa', 'Real dataset pressure', ['device_ip'])
+print(f"Using The Following Physical Dataset {PHYSICAL_CSV}...")
+print(f"Using The Following Cyber Dataset {CYBER_CSV}...")
+print(f"Starting Highly Synchronized IoT Edge Agent on port {PROMETHEUS_PORT}...")
+start_http_server(PROMETHEUS_PORT)
 
-# --- 2. Cyber Metrics (From PCAP CSV) ---
-CYBER_PACKET_BYTES = Gauge('iot_cyber_packet_size_bytes', 'Size of the network packet', ['protocol', 'source', 'destination'])
-CYBER_PACKET_COUNTER = Counter('iot_cyber_packets_total', 'Total packets processed', ['protocol'])
+def run_synchronized_emulation():
+    with open(PHYSICAL_CSV, 'r') as phys_f, open(CYBER_CSV, 'r') as cyber_f:
+        phys_reader = csv.reader(phys_f)
+        cyber_reader = csv.reader(cyber_f)
 
-def replay_datasets():
-    """Reads both the Headerless Physical CSV and the Cyber CSV simultaneously."""
-    if not os.path.exists(PHYSICAL_DATASET) or not os.path.exists(CYBER_DATASET):
-        print("Error: Dataset CSV files not found.")
-        time.sleep(5)
-        return
+        # Read the headers (skip them)
+        next(phys_reader, None)
+        cyber_headers = next(cyber_reader, None)
 
-    print(f"▶️ Starting Dual-Dataset Replay (Logical Sync)...")
+        # 1. Establish the Anchor (Time Zero)
+        try:
+            first_phys_row = next(phys_reader)
+            first_cyber_row = next(cyber_reader)
 
-    with open(PHYSICAL_DATASET, 'r') as phys_file, open(CYBER_DATASET, 'r') as cyber_file:
-        # phys_reader is a standard reader because there are no headers in the file
-        phys_reader = csv.reader(phys_file)
-        # cyber_reader is a DictReader because it has headers
-        cyber_reader = csv.DictReader(cyber_file)
+            # The physical dataset has the absolute EPOCH time
+            time_zero_epoch = float(first_phys_row[0])
 
-        # zip() pairs them line-by-line logically
-        for phys_row_raw, cyber_row in zip(phys_reader, cyber_reader):
+            print(f"Anchor Established at EPOCH: {time_zero_epoch}")
 
-            # --- PROCESS PHYSICAL ROW ---
-            # Map the raw list to our 27 headers
-            phys_row = dict(zip(PHYSICAL_HEADERS, phys_row_raw))
+        except StopIteration:
+            print("Error: Empty datasets.")
+            return
 
-            dev_ip = phys_row.get('DevIP', 'Unknown')
+        # Prepare to loop
+        current_cyber_row = first_cyber_row
 
+        # Process the very first physical row
+        try:
+            temp = float(first_phys_row[3])
+            ip = first_phys_row[2]
+            REAL_TEMP.labels(device_ip=ip).set(temp)
+        except (ValueError, IndexError):
+            pass
+
+        # 2. The Main Synchronization Loop
+        for phys_row in phys_reader:
             try:
-                # Extract and push the physical safety metrics
-                REAL_TEMP.labels(device_ip=dev_ip).set(float(phys_row.get('Temp', 0)))
-                REAL_HUMIDITY.labels(device_ip=dev_ip).set(float(phys_row.get('Humidity', 0)))
-                REAL_PRESSURE.labels(device_ip=dev_ip).set(float(phys_row.get('Pressure', 0)))
-            except ValueError:
-                pass
+                # The "current" second we are emulating
+                current_epoch_window = float(phys_row[0])
 
-            # --- PROCESS CYBER ROW ---
-            protocol = cyber_row.get('_ws.col.Protocol', 'UNKNOWN')
-            length_str = cyber_row.get('_ws.col.Length', '0')
-            src_ip = cyber_row.get('_ws.col.Source', '0.0.0.0')
-            dst_ip = cyber_row.get('_ws.col.Destination', '0.0.0.0')
+                # Push the physical metrics for this second
+                temp = float(phys_row[3])
+                ip = phys_row[2]
+                REAL_TEMP.labels(device_ip=ip).set(temp)
 
-            try:
-                packet_size = float(length_str)
-                CYBER_PACKET_BYTES.labels(protocol=protocol, source=src_ip, destination=dst_ip).set(packet_size)
+                print(f"[Time: {current_epoch_window}] Emulating physical state (Temp: {temp})...")
 
-                # --- NEW VOLUMETRIC FLOOD LOGIC ---
-                if src_ip == '198.51.100.44':
-                    # If it's our injected attacker, simulate a massive flood (5000 packets per second)
-                    CYBER_PACKET_COUNTER.labels(protocol=protocol).inc(5000)
-                else:
-                    # Normal background traffic
-                    CYBER_PACKET_COUNTER.labels(protocol=protocol).inc(1)
+                # 3. Aggregate all cyber packets that happened in this exact second
+                packets_this_second = 0
+                while current_cyber_row:
+                    # Translate the relative cyber time to absolute EPOCH time
+                    relative_cyber_time = float(current_cyber_row[1])
+                    translated_cyber_epoch = time_zero_epoch + relative_cyber_time
 
-            except ValueError:
-                packet_size = 0
+                    # If this packet happened BEFORE the next physical reading, count it
+                    if translated_cyber_epoch <= current_epoch_window:
+                        protocol = current_cyber_row[4]
+                        length = current_cyber_row[5]
+                        src = current_cyber_row[2]
+                        dst = current_cyber_row[3]
 
-            try:
-                packet_size = float(length_str)
-                CYBER_PACKET_BYTES.labels(protocol=protocol, source=src_ip, destination=dst_ip).set(packet_size)
-                CYBER_PACKET_COUNTER.labels(protocol=protocol).inc()
-            except ValueError:
-                packet_size = 0
+                        try:
+                            CYBER_PACKET_BYTES.labels(protocol=protocol, source=src, destination=dst).set(float(length))
+                            CYBER_PACKET_COUNTER.labels(protocol=protocol).inc(1)
+                            packets_this_second += 1
+                        except ValueError:
+                            pass
 
-            # Print to terminal
-            print(f"[PHYSICAL - {dev_ip}] Temp: {phys_row.get('Temp')}°C  |  [CYBER] {protocol} Packet: {packet_size} bytes")
+                        # Grab the next cyber row to check it
+                        try:
+                            current_cyber_row = next(cyber_reader)
+                        except StopIteration:
+                            current_cyber_row = None # Reached end of cyber file
+                            break
+                    else:
+                        # This packet belongs to the FUTURE. Stop aggregating and wait for the next physical row.
+                        break
 
-            time.sleep(1) # Replay at 1 row per second
+                print(f"   -> Aggregated {packets_this_second} packets for this time window.")
 
-    print("🔁 Replay finished. Restarting tape...")
+                # We emulate real-time pacing. Wait 1 second before processing the next physical window.
+                time.sleep(1)
 
-def main():
-    print(f"Starting 100% Dataset-Driven Agent on port 8000...")
-    start_http_server(8000)
-    while True:
-        replay_datasets()
+            except (ValueError, IndexError) as e:
+                continue # Skip malformed rows
 
 if __name__ == '__main__':
-    main()
+    print("--- Beginning Trace-Driven Emulation ---")
+    run_synchronized_emulation()
+    print("--- Emulation Complete. Standing by. ---")
+    # Keep the script alive so the container doesn't crash,
+    # but DON'T loop the data!
+    while True:
+        time.sleep(60)
