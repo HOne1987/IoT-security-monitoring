@@ -15,7 +15,7 @@ AI_ANOMALY_SCORE = Gauge('ai_anomaly_score', 'AI Anomaly Score (1 = Threat, 0 = 
 
 scaler = StandardScaler()
 # contamination=0.01 means we only expect 1% of data to be severe anomalies (prevents over-sensitivity)
-model = IsolationForest(contamination=0.03, random_state=42)
+model = IsolationForest(contamination=0.01, random_state=42)
 
 baseline_data = []
 is_trained = False
