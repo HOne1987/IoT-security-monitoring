@@ -22,86 +22,74 @@ def run_synchronized_emulation():
         phys_reader = csv.reader(phys_f)
         cyber_reader = csv.reader(cyber_f)
 
-        # Read the headers (skip them)
+        # Skip headers
         next(phys_reader, None)
-        cyber_headers = next(cyber_reader, None)
+        next(cyber_reader, None)
 
-        # 1. Establish the Anchor (Time Zero)
         try:
             first_phys_row = next(phys_reader)
             first_cyber_row = next(cyber_reader)
-
-            # The physical dataset has the absolute EPOCH time
             time_zero_epoch = float(first_phys_row[0])
-
             print(f"Anchor Established at EPOCH: {time_zero_epoch}")
-
         except StopIteration:
             print("Error: Empty datasets.")
             return
 
-        # Prepare to loop
         current_cyber_row = first_cyber_row
+        current_epoch_window = time_zero_epoch
 
-        # Process the very first physical row
+        # Push the very first physical row
         try:
-            temp = float(first_phys_row[3])
-            ip = first_phys_row[2]
-            REAL_TEMP.labels(device_ip=ip).set(temp)
+            REAL_TEMP.labels(device_ip=first_phys_row[2]).set(float(first_phys_row[3]))
         except (ValueError, IndexError):
             pass
 
-        # 2. The Main Synchronization Loop
+        # 2. The Corrected Synchronization Loop
         for phys_row in phys_reader:
             try:
-                # The "current" second we are emulating
-                current_epoch_window = float(phys_row[0])
-
-                # Push the physical metrics for this second
+                row_epoch = float(phys_row[0])
                 temp = float(phys_row[3])
                 ip = phys_row[2]
+
+                # If we have moved to the NEXT physical second in the CSV
+                if row_epoch > current_epoch_window:
+
+                    # 1. Catch up the Cyber packets for the second we just finished
+                    packets_this_second = 0
+                    while current_cyber_row:
+                        relative_cyber_time = float(current_cyber_row[1])
+                        translated_cyber_epoch = time_zero_epoch + relative_cyber_time
+
+                        if translated_cyber_epoch <= current_epoch_window:
+                            protocol = current_cyber_row[4]
+                            try:
+                                CYBER_PACKET_BYTES.labels(protocol=protocol, source=current_cyber_row[2], destination=current_cyber_row[3]).set(float(current_cyber_row[5]))
+                                CYBER_PACKET_COUNTER.labels(protocol=protocol).inc(1)
+                                packets_this_second += 1
+                            except ValueError:
+                                pass
+
+                            try:
+                                current_cyber_row = next(cyber_reader)
+                            except StopIteration:
+                                current_cyber_row = None
+                                break
+                        else:
+                            break # Packet belongs to the future, stop aggregating
+
+                    print(f"[Epoch: {current_epoch_window}] Pushed Physical Data | Aggregated {packets_this_second} Cyber Packets")
+
+                    # 2. Emulate the 1-second passing ONCE per epoch window
+                    time.sleep(1)
+
+                    # 3. Advance our time window to the new second
+                    current_epoch_window = row_epoch
+
+                # Push the physical metrics (This happens for EVERY row instantly, grouping multiple IPs)
                 REAL_TEMP.labels(device_ip=ip).set(temp)
 
-                print(f"[Time: {current_epoch_window}] Emulating physical state (Temp: {temp})...")
-
-                # 3. Aggregate all cyber packets that happened in this exact second
-                packets_this_second = 0
-                while current_cyber_row:
-                    # Translate the relative cyber time to absolute EPOCH time
-                    relative_cyber_time = float(current_cyber_row[1])
-                    translated_cyber_epoch = time_zero_epoch + relative_cyber_time
-
-                    # If this packet happened BEFORE the next physical reading, count it
-                    if translated_cyber_epoch <= current_epoch_window:
-                        protocol = current_cyber_row[4]
-                        length = current_cyber_row[5]
-                        src = current_cyber_row[2]
-                        dst = current_cyber_row[3]
-
-                        try:
-                            CYBER_PACKET_BYTES.labels(protocol=protocol, source=src, destination=dst).set(float(length))
-                            CYBER_PACKET_COUNTER.labels(protocol=protocol).inc(1)
-                            packets_this_second += 1
-                        except ValueError:
-                            pass
-
-                        # Grab the next cyber row to check it
-                        try:
-                            current_cyber_row = next(cyber_reader)
-                        except StopIteration:
-                            current_cyber_row = None # Reached end of cyber file
-                            break
-                    else:
-                        # This packet belongs to the FUTURE. Stop aggregating and wait for the next physical row.
-                        break
-
-                print(f"   -> Aggregated {packets_this_second} packets for this time window.")
-
-                # We emulate real-time pacing. Wait 1 second before processing the next physical window.
-                time.sleep(1)
-
-            except (ValueError, IndexError) as e:
-                continue # Skip malformed rows
+            except (ValueError, IndexError):
+                continue
 
 if __name__ == '__main__':
     print("--- Beginning Trace-Driven Emulation ---")
