@@ -34,8 +34,8 @@ def analyze():
     global is_trained, baseline_data
 
     # Using [1] instead of [3] to ensure we read Temperature, not Noise!
-    temp = fetch_metric('iot_physical_temperature_c{device_ip="10.11.12.17"}')
-    pps = fetch_metric('sum(irate(iot_cyber_packets_total[1m]))')
+    temp = fetch_metric('iot_physical_temperature_c')
+    pps = fetch_metric('sum(rate(iot_cyber_packets_total[1m]))')
 
     if temp == 0.0 and pps == 0.0:
         return
