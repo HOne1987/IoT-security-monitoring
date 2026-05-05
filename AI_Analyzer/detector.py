@@ -20,31 +20,31 @@ model = IsolationForest(contamination=0.01, random_state=42)
 baseline_data = []
 is_trained = False
 
-def fetch_metric(query):
-    try:
-        response = requests.get(PROMETHEUS_URL, params={'query': query})
-        results = response.json().get('data', {}).get('result', [])
-        if results:
-            return float(results[0]['value'][1])
-    except Exception:
-        pass
-    return 0.0
+# detector.py (Flow-Level Features)
+
+FEATURES = ['flow_count', 'avg_duration', 'avg_bytes']
+
+def fetch_metrics():
+    flow_count = fetch_metric('iot_cyber_flow_count')
+    avg_duration = fetch_metric('iot_cyber_avg_flow_duration_sec')
+    avg_bytes = fetch_metric('iot_cyber_avg_flow_bytes')
+    return [flow_count, avg_duration, avg_bytes]
+
+# Rest of the warm-up and inference stays the same
 
 def analyze():
     global is_trained, baseline_data
 
-    # Using [1] instead of [3] to ensure we read Temperature, not Noise!
-    temp = fetch_metric('iot_physical_temperature_c')
-    pps = fetch_metric('sum(rate(iot_cyber_packets_total[1m]))')
+    pps = fetch_metric('iot_cyber_pps')
+    byte_rate = fetch_metric('iot_cyber_byte_rate')
 
-    if temp == 0.0 and pps == 0.0:
+    if pps == 0.0 and byte_rate == 0.0:
         return
 
     # --- PHASE 1: DYNAMIC WARM-UP & TRAINING ---
     if not is_trained:
-        baseline_data.append([temp, pps])
-        # flush=True forces Docker to print to the terminal immediately!
-        print(f"[WARM-UP {len(baseline_data)}/{WARMUP_PERIOD_CHECKS}] Learning environment... Temp: {temp:.1f}, PPS: {pps:.1f}", flush=True)
+        baseline_data.append([pps, byte_rate])
+        print(f"[WARM-UP {len(baseline_data)}/{WARMUP_PERIOD_CHECKS}] Learning environment... PPS: {pps:.1f}, Byte Rate: {byte_rate:.1f}", flush=True)
 
         if len(baseline_data) >= WARMUP_PERIOD_CHECKS:
             print("\n[AI] Warm-up complete! Fitting Scaler and Isolation Forest to real environment data...", flush=True)
@@ -59,7 +59,7 @@ def analyze():
 
 
     # --- PHASE 2: ACTIVE THREAT DETECTION ---
-    scaled_live = scaler.transform([[temp, pps]])
+    scaled_live = scaler.transform([[pps, byte_rate]])
 
     # Start the stopwatch
     start_time = time.perf_counter()
@@ -77,7 +77,7 @@ def analyze():
     AI_ANOMALY_SCORE.set(score)
 
     status = "🚨 THREAT DETECTED" if score == 1 else "✅ NORMAL"
-    print(f"[AI] Temp: {temp:.1f}°C | PPS: {pps:.1f} | ML Score: {raw_score:.3f} | Latency: {inference_time_ms:.2f}ms | {status}", flush=True)
+    print(f"[AI] PPS: {pps:.1f} | Byte Rate: {byte_rate:.1f} | ML Score: {raw_score:.3f} | Latency: {inference_time_ms:.2f}ms | {status}", flush=True)
 
 if __name__ == '__main__':
     print("Starting Adaptive AI Anomaly Detector...", flush=True)
