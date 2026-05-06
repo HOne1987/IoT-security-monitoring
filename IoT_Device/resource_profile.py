@@ -105,7 +105,7 @@ else:
 # ── TIME-TO-ALERT ─────────────────────────────────────────────────────────────
 attack_mask = df['label'] == 1
 if attack_mask.any():
-    first_attack_ts = df_valid[df_valid['label'] == 1]['ts'].min()
+    first_attack_ts = df.loc[attack_mask, 'ts'].min()
     time_to_alert = first_attack_ts - 60
     print(f"⚠️  First attack appears at T+{time_to_alert:.1f}s (after warm-up)")
 
@@ -132,7 +132,7 @@ results_df.to_csv('resource_profile_results.csv', index=False)
 
 # ── THRESHOLD ANALYSIS ────────────────────────────────────────────────────────
 print("\nThreshold Analysis:")
-contamination_levels = [0.005, 0.01, 0.02, 0.05, 0.10, 0.15, 0.20]
+contamination_levels = [0.005, 0.01, 0.02, 0.05]
 threshold_rows = []
 
 eval_df = windowed[windowed['window'] >= 6].copy()

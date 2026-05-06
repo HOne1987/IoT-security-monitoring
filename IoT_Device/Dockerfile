@@ -16,6 +16,7 @@ RUN useradd -r -s /bin/false -u 1001 iotuser
 # 3. Application Setup
 WORKDIR /app
 COPY universal_agent_ToN-IoT.py /app/
+COPY resource_profile.py /app/
 
 # 4. Permissions
 RUN chown -R iotuser:iotuser /app
