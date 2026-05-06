@@ -36,12 +36,22 @@ def run_emulation(df):
     for window_id in df['window'].unique():
         window_df = df[df['window'] == window_id]
 
-        # Flow-level statistics
-        flow_count = len(window_df)
-        avg_duration = window_df['duration'].mean()
-        avg_bytes = (window_df['src_bytes'].sum() + window_df['dst_bytes'].sum()) / max(flow_count, 1)
+        # ✨ FIX: Filter out duration=0 flows (malformed/instant flows)
+        # Only consider "real" flows with measurable duration
+        valid_flows = window_df[window_df['duration'] > 0]
 
-        # Ground truth
+        # Flow-level statistics (from valid flows only)
+        if len(valid_flows) > 0:
+            flow_count = len(valid_flows)
+            avg_duration = valid_flows['duration'].mean()
+            avg_bytes = (valid_flows['src_bytes'].sum() + valid_flows['dst_bytes'].sum()) / flow_count
+        else:
+            # If no valid flows in this window, report zeros
+            flow_count = 0
+            avg_duration = 0.0
+            avg_bytes = 0.0
+
+        # Ground truth (check if ANY flow in window—valid or not—is an attack)
         has_attack = window_df['label'].max()
 
         # Export metrics
@@ -50,7 +60,7 @@ def run_emulation(df):
         AVG_FLOW_BYTES.set(avg_bytes)
         ATTACK_LABEL.set(has_attack)
 
-        print(f"[Window {window_id}] Flows: {flow_count} | "
+        print(f"[Window {window_id}] Valid Flows: {flow_count} | "
               f"Avg Duration: {avg_duration:.2f}s | Avg Bytes: {avg_bytes:.0f} | "
               f"Attack: {has_attack}")
 
