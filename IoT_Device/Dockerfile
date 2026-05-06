@@ -8,7 +8,7 @@ LABEL description="Hardened Universal IoT Agent (UBI 9)"
 # UBI 9 uses 'python3' (which is 3.9+) instead of 'python39'
 RUN microdnf install -y python3 python3-pip python3-devel gcc \
     && microdnf clean all \
-    && pip3 install prometheus_client psutil pandas
+    && pip3 install prometheus_client pandas
 
 # 2. Security Hardening: Create non-root user
 RUN useradd -r -s /bin/false -u 1001 iotuser
