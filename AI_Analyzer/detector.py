@@ -12,42 +12,72 @@ WARMUP_PERIOD_CHECKS = 12  # 12 checks * 5 seconds = 60 seconds of learning
 
 # --- Metrics ---
 AI_ANOMALY_SCORE = Gauge('ai_anomaly_score', 'AI Anomaly Score (1 = Threat, 0 = Normal)')
+INFERENCE_LATENCY_MS = Gauge('ai_inference_latency_ms', 'Time to make prediction (milliseconds)')
 
 scaler = StandardScaler()
-# contamination=0.01 means we only expect 1% of data to be severe anomalies (prevents over-sensitivity)
+# contamination=0.01 means we only expect 1% of data to be severe anomalies
 model = IsolationForest(contamination=0.01, random_state=42)
 
 baseline_data = []
 is_trained = False
 
-# detector.py (Flow-Level Features)
-
+# --- FLOW-LEVEL FEATURES ---
 FEATURES = ['flow_count', 'avg_duration', 'avg_bytes']
 
-def fetch_metrics():
+
+def fetch_metric(metric_name):
+    """Query Prometheus for a single metric value."""
+    try:
+        response = requests.get(
+            PROMETHEUS_URL,
+            params={'query': metric_name},
+            timeout=2
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if data['status'] == 'success' and data['data']['result']:
+            return float(data['data']['result'][0]['value'][1])
+        return 0.0
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch {metric_name}: {e}", flush=True)
+        return 0.0
+
+
+def fetch_flow_metrics():
+    """Fetch all three flow-level features from Prometheus."""
     flow_count = fetch_metric('iot_cyber_flow_count')
     avg_duration = fetch_metric('iot_cyber_avg_flow_duration_sec')
     avg_bytes = fetch_metric('iot_cyber_avg_flow_bytes')
     return [flow_count, avg_duration, avg_bytes]
 
-# Rest of the warm-up and inference stays the same
 
 def analyze():
     global is_trained, baseline_data
 
-    pps = fetch_metric('iot_cyber_pps')
-    byte_rate = fetch_metric('iot_cyber_byte_rate')
+    # Fetch flow-level metrics
+    metrics = fetch_flow_metrics()
+    flow_count, avg_duration, avg_bytes = metrics
 
-    if pps == 0.0 and byte_rate == 0.0:
+    # Skip if no data yet
+    if all(m == 0.0 for m in metrics):
         return
 
     # --- PHASE 1: DYNAMIC WARM-UP & TRAINING ---
     if not is_trained:
-        baseline_data.append([pps, byte_rate])
-        print(f"[WARM-UP {len(baseline_data)}/{WARMUP_PERIOD_CHECKS}] Learning environment... PPS: {pps:.1f}, Byte Rate: {byte_rate:.1f}", flush=True)
+        baseline_data.append(metrics)
+        print(
+            f"[WARM-UP {len(baseline_data)}/{WARMUP_PERIOD_CHECKS}] "
+            f"Flow Count: {flow_count:.1f}, Avg Duration: {avg_duration:.2f}s, "
+            f"Avg Bytes: {avg_bytes:.0f}",
+            flush=True
+        )
 
         if len(baseline_data) >= WARMUP_PERIOD_CHECKS:
-            print("\n[AI] Warm-up complete! Fitting Scaler and Isolation Forest to real environment data...", flush=True)
+            print(
+                "\n[AI] Warm-up complete! Fitting Scaler and Isolation Forest to real environment data...",
+                flush=True
+            )
             # Train the AI on the actual data we just collected
             np_baseline = np.array(baseline_data)
             scaler.fit(np_baseline)
@@ -57,9 +87,10 @@ def analyze():
             print("[AI] Training Complete. Switching to active Threat Detection Mode.\n", flush=True)
         return
 
-
     # --- PHASE 2: ACTIVE THREAT DETECTION ---
-    scaled_live = scaler.transform([[pps, byte_rate]])
+    # Reshape for scaler (must be 2D)
+    metrics_array = np.array(metrics).reshape(1, -1)
+    scaled_live = scaler.transform(metrics_array)
 
     # Start the stopwatch
     start_time = time.perf_counter()
@@ -73,14 +104,22 @@ def analyze():
     # Calculate inference time in milliseconds
     inference_time_ms = (end_time - start_time) * 1000
 
+    # Convert prediction to binary: -1 (anomaly) -> 1, 1 (normal) -> 0
     score = 1 if prediction == -1 else 0
     AI_ANOMALY_SCORE.set(score)
+    INFERENCE_LATENCY_MS.set(inference_time_ms)
 
     status = "🚨 THREAT DETECTED" if score == 1 else "✅ NORMAL"
-    print(f"[AI] PPS: {pps:.1f} | Byte Rate: {byte_rate:.1f} | ML Score: {raw_score:.3f} | Latency: {inference_time_ms:.2f}ms | {status}", flush=True)
+    print(
+        f"[AI] Flow Count: {flow_count:.1f} | Avg Duration: {avg_duration:.2f}s | "
+        f"Avg Bytes: {avg_bytes:.0f} | ML Score: {raw_score:.3f} | "
+        f"Latency: {inference_time_ms:.2f}ms | {status}",
+        flush=True
+    )
+
 
 if __name__ == '__main__':
-    print("Starting Adaptive AI Anomaly Detector...", flush=True)
+    print("Starting Adaptive AI Anomaly Detector (Flow-Level)...", flush=True)
     start_http_server(8001)
 
     # Give Prometheus a few seconds to boot and start scraping
