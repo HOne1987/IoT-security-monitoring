@@ -44,8 +44,8 @@ windowed['avg_bytes'] = (windowed['src_bytes'] + windowed['dst_bytes']) / window
 FEATURES = ['flow_count', 'duration', 'avg_bytes']
 
 # ── WARM-UP PHASE (first 60s of benign flows only) ────────────────────────────
-warmup_df = windowed[(windowed['window'] < 6) & (windowed['label'] == 0)]
-print(f"📊 Warm-up: {len(warmup_df)} benign windows (0-60s)")
+warmup_df = windowed[(windowed['window'] < 60) & (windowed['label'] == 0)]
+print(f"📊 Warm-up: {len(warmup_df)} benign windows (0-600s)")
 
 if len(warmup_df) == 0:
     raise ValueError("No benign warm-up data available in the first 60 seconds")
@@ -154,7 +154,7 @@ for c in contamination_levels:
     except ValueError:
         auc = float('nan')
 
-    marker = "✅ RECOMMENDED" if c == 0.01 else ""
+    marker = "✅ RECOMMENDED" if c == 0.05 else ""
     print(f"  contamination={c} → F1={f1:.3f}, ROC-AUC={auc:.3f} {marker}")
     threshold_rows.append({'contamination': c, 'precision': prec, 'recall': rec, 'f1_score': f1, 'roc_auc': auc})
 
