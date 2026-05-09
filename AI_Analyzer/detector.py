@@ -8,7 +8,7 @@ from prometheus_client import start_http_server, Gauge
 # --- Configuration ---
 PROMETHEUS_URL = 'http://prometheus:9090/api/v1/query'
 UPDATE_INTERVAL = 5
-WARMUP_PERIOD_CHECKS = 12  # 12 checks * 5 seconds = 60 seconds of learning
+WARMUP_PERIOD_CHECKS = 120  # 120 checks * 5 seconds = 600 seconds
 
 # --- Metrics ---
 AI_ANOMALY_SCORE = Gauge('ai_anomaly_score', 'AI Anomaly Score (1 = Threat, 0 = Normal)')
