@@ -14,9 +14,7 @@ RUN microdnf install -y python3 python3-pip python3-devel gcc \
 RUN useradd -r -s /bin/false -u 1001 iotuser
 
 # 3. Application Setup
-WORKDIR /app
-COPY universal_agent_ToN-IoT.py /app/
-COPY resource_profile.py /app/
+WORKDIR /app/code
 
 # 4. Permissions
 RUN chown -R iotuser:iotuser /app

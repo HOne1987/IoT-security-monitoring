@@ -11,6 +11,7 @@ services:
       - iot-secure-net
     volumes:
       - ./data:/app/data
+      - ./IoT_Device:/app/code
     restart: unless-stopped
 
   # --- THE HUB: Prometheus Database ---
@@ -49,6 +50,8 @@ services:
       - "8001:8001"
     networks:
       - iot-secure-net
+    volumes:
+      - ./AI_Analyzer:/app/code
     depends_on:
       - prometheus
 

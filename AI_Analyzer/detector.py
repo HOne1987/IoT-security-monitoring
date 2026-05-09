@@ -15,8 +15,7 @@ AI_ANOMALY_SCORE = Gauge('ai_anomaly_score', 'AI Anomaly Score (1 = Threat, 0 = 
 INFERENCE_LATENCY_MS = Gauge('ai_inference_latency_ms', 'Time to make prediction (milliseconds)')
 
 scaler = StandardScaler()
-# contamination=0.01 means we only expect 1% of data to be severe anomalies
-model = IsolationForest(contamination=0.01, random_state=42)
+model = IsolationForest(contamination=0.05, random_state=42)
 
 baseline_data = []
 is_trained = False
