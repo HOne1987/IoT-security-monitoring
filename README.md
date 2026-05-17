@@ -1,67 +1,149 @@
-# 🛡️ Lightweight Cloud-Based Security Monitoring & Safety Assurance
+# IoT Security Monitoring — MSc Cybersecurity Project
 
-**MSc Cybersecurity Project | Edge-Hub Architecture | Red Hat UBI 9**
+**"A Lightweight Cloud-Based Security Monitoring and Safety Assurance Framework for Residential IoT"**
 
-This repository contains the implementation artifacts for an MSc Cybersecurity thesis focused on **"A Lightweight Cloud-Based Security Monitoring and Safety Assurance Framework for Residential IoT."**
+A containerised, Cloud-Edge collaborative security monitoring system for smart homes. Network flows from an IoT edge agent are streamed into a Prometheus/Grafana observability stack where a supervised Random Forest detector classifies traffic in real time.
 
-The project provides a deployable, containerized solution that correlates **Digital Security** (e.g., Mirai Botnet detection) with **Physical Safety** (e.g., CO2 hazards) using an open-source observability stack.
+---
 
-## 🏗️ System Architecture
-The system follows a **Cloud-Edge Collaborative Model** (specifically an On-Premises Edge/Hub deployment) to ensure low latency and data privacy.
+## Architecture
 
+![System Architecture](MSc%20Project%20Architecture_2026-05-17_19-49-49.png)
 
+```
+IoT Edge Node  ──►  Prometheus (scrape 5 s)  ──►  Grafana (dashboard)
+(universal_agent_ToN-IoT.py)                        │
+    exports iot_cyber_* metrics                      └──►  AI Analyzer
+    per 10-second window                                    (detector.py / RF)
+```
 
-* **The Edge Node (IoT Device):** A hardened **Red Hat Universal Base Image (UBI 9)** container acting as the "Digital Twin" of a secure residential IoT device. It runs a custom Python telemetry agent.
-* **The Monitoring Hub:** A local orchestration of **Prometheus** (Time-Series Database) and **Grafana** (Visualization) that scrapes metrics from the edge node in near real-time (5s interval).
+| Layer | Component | Role |
+|---|---|---|
+| Edge | `IoT_Device/universal_agent_ToN-IoT.py` | Replays ToN-IoT flows; exports Prometheus metrics |
+| Hub | Prometheus + Grafana | Time-series storage and real-time visualisation |
+| AI | `AI_Analyzer/detector.py` | Random Forest anomaly detection (per-window inference) |
 
-## 🧪 Scientific Simulation Methodology
-Unlike standard monitoring tools that rely on random data generation, this framework implements **scientifically accurate attack profiles** based on the **CicIoT2023 Dataset**.
+---
 
-The `universal_agent.py` simulates the following scenarios based on empirical traffic signatures:
-1.  **Benign Operation:** Low CPU (<5%) and minimal network traffic.
-2.  **Mirai Botnet / UDP Flood:** Simulates an infected device participating in a DDoS attack.
-    * *Signature:* Network traffic spikes to 5-15 MB/s; CPU utilization > 80%.
-3.  **Brute Force Attack:** Simulates a dictionary attack on the device's login service.
-    * *Signature:* High rate of failed login attempts (`syn_flag` correlation).
-4.  **Physical Safety Hazard:** Simulates environmental anomalies (e.g., CO2 > 2000 ppm) to demonstrate Cyber-Physical assurance.
+## Key Findings
 
-## 🚀 Getting Started
+### Model Selection: Random Forest (supervised) over Isolation Forest (unsupervised)
+
+| Model | Precision | Recall | F1-Score | ROC-AUC |
+|---|---|---|---|---|
+| Random Threshold (heuristic) | 0.3477 | 0.9237 | 0.5052 | 0.9754 |
+| Isolation Forest (unsupervised) | 0.3041 | 0.5038 | 0.3793 | 0.9416 |
+| **Random Forest (supervised)** | **0.9008** | **0.8321** | **0.8651** | **0.9898** |
+
+All three models evaluated on the same held-out 30 % test set (stratified, 70/30 split). See [`evaluate.py`](evaluate.py) and [`evaluation_final.csv`](evaluation_final.csv).
+
+### Resource Overhead (RF on ToN-IoT, all windows)
+
+| Metric | Baseline (benign) | Attack windows |
+|---|---|---|
+| CPU | 0.8 % ± 8.6 % | 2.0 % ± 14.1 % |
+| RAM | 826 MiB (stable) | 826 MiB (stable) |
+| Inference latency | 6.95 ms ± 4.06 ms | 6.35 ms ± 2.63 ms |
+
+Sub-7 ms per-window inference is viable on commodity edge hardware. See [`resource_profile.py`](resource_profile.py) and [`resource_profile_results.csv`](resource_profile_results.csv).
+
+---
+
+## Dataset
+
+**ToN-IoT Network dataset** (`data/Network_dataset_1.csv`) — flow-level captures aggregated into 10-second windows.
+
+| Property | Value |
+|---|---|
+| Source | ToN-IoT (UNSW Canberra) |
+| Raw flows | ~1 M |
+| Windows after aggregation | 13,674 |
+| Benign / Attack split | ~96.8 % / 3.2 % |
+| Features used | `flow_count`, `avg_duration`, `avg_bytes` |
+| Train / Test split | 70 / 30 stratified |
+
+Features match the three Prometheus metrics exported by the live agent (`iot_cyber_flow_count`, `iot_cyber_avg_flow_duration_sec`, `iot_cyber_avg_flow_bytes`), ensuring training and inference operate on identical representations.
+
+---
+
+## Running the Project
 
 ### Prerequisites
-* Docker & Docker Compose
 
-### Installation & Deployment
-1.  **Clone the repository:**
-    ```bash
-    git clone [https://github.com/HOne1987/IoT-security-monitoring.git](https://github.com/HOne1987/IoT-security-monitoring.git)
-    cd IoT-security-monitoring
-    ```
+- Docker and Docker Compose
 
-2.  **Launch the Stack:**
-    Build the hardened UBI images and start the services.
-    ```bash
-    docker-compose up --build -d
-    ```
+### Start the full stack
 
-3.  **Access the Dashboard:**
-    * Open your browser to: `http://localhost:3000`
-    * **Login:** `admin` / `admin`
-    * *Note:* The data source (Prometheus) is **automatically provisioned** via configuration files, so you do not need to configure connections manually.
+```bash
+git clone https://github.com/HOne1987/IoT-security-monitoring.git
+cd IoT-security-monitoring
+docker-compose up --build -d
+```
 
-### Usage
-* **Visualizing Attacks:** The simulation loop runs automatically. Watch the dashboard for 60 seconds to see the cycle:
-    * `0s - 30s`: Normal Traffic (Green status).
-    * `30s - 45s`: **Mirai Attack** (Network/CPU Spike).
-    * `45s - 60s`: **Brute Force** (Login Counter Spike).
-* **Persistence:** Grafana dashboards and users are saved to a Docker volume (`grafana_storage`), so your changes persist across restarts.
+| Service | URL | Credentials |
+|---|---|---|
+| Grafana dashboard | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | — |
 
-## 📂 Project Structure
-```text
+The Prometheus data source is auto-provisioned; no manual configuration required.
+
+### Retrain the model
+
+```bash
+python train_random_forest.py          # saves to AI_Analyzer/models/
+```
+
+### Re-run the evaluation
+
+```bash
+python evaluate.py                     # three-way comparison, saves evaluation_final.*
+python resource_profile.py             # CPU/RAM/latency analysis, saves resource_profile_*
+```
+
+---
+
+## Repository Structure
+
+```
 .
-├── IoT_Device/             # The Hardened Edge Artifact
-│   ├── Dockerfile          # Red Hat UBI 9 Minimal Config (NIST Hardened)
-│   └── universal_agent.py  # Telemetry Agent & CicIoT2023 Simulator
-├── Hub_Configs/            # Monitoring Infrastructure
-│   ├── prometheus.yml      # Scrape Configs
-│   └── grafana/            # Provisioning (Auto-connect Data Sources)
-└── docker-compose.yml      # Service Orchestration
+├── AI_Analyzer/
+│   ├── detector.py                    # RF inference loop (Prometheus → alert)
+│   ├── Dockerfile
+│   └── models/
+│       ├── random_forest_model.pkl    # Trained model (joblib)
+│       ├── scaler.pkl                 # StandardScaler
+│       ├── features.txt               # Feature list
+│       └── training_metadata.txt      # Training run summary
+├── IoT_Device/
+│   ├── universal_agent_ToN-IoT.py    # Flow telemetry agent
+│   └── Dockerfile
+├── Hub_Configs/
+│   ├── prometheus.yml
+│   └── grafana/                       # Auto-provisioned data source + dashboard
+├── data/
+│   └── Network_dataset_1.csv          # ToN-IoT network flows (gitignored)
+├── train_random_forest.py             # Model training script
+├── evaluate.py                        # Chapter 4 baseline comparison
+├── resource_profile.py                # CPU / RAM / latency profiling
+├── random_forest_train_test_split.py  # IF vs RF resource comparison
+├── docker-compose.yml
+└── evaluation_final.{csv,png}         # Results
+```
+
+---
+
+## Thesis Structure
+
+| Chapter | Content |
+|---|---|
+| Chapter 1 | Introduction — residential IoT threat landscape |
+| Chapter 2 | Literature review — anomaly detection, edge computing |
+| Chapter 3 | System design — architecture, dataset, feature engineering |
+| Chapter 4 | Evaluation — three-way model comparison, resource analysis |
+| Chapter 5 | Conclusion — findings, limitations, future work |
+
+---
+
+## License
+
+See [LICENSE](LICENSE).
