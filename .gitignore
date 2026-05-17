@@ -5,3 +5,6 @@ data/*.csv
 # EXCEPT the two specific presentation files
 !data/SensorData500Rows.csv
 !data/temp_00001_20221019140448.pcap_35000_rows.csv
+
+# Runtime logs
+logs/

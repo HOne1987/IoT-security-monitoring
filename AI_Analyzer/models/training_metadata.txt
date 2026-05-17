@@ -1,0 +1,14 @@
+Random Forest Training Metadata
+==================================================
+Training date: 2026-05-16 22:49:30.624026
+Dataset: data/Network_dataset_1.csv
+Window size: 10s
+Features: flow_count, avg_duration, avg_bytes
+Train windows: 9,571
+Test windows:  4,103
+
+Test Set Performance:
+  Precision: 0.9008
+  Recall:    0.8321
+  F1-Score:  0.8651
+  ROC-AUC:   0.9898

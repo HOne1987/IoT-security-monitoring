@@ -1,0 +1,7 @@
+Model,Training Data,Precision,Recall,F1-Score,ROC-AUC
+"Isolation Forest
+(Unsupervised)","Benign only
+(600s warm-up)",0.1184,0.5849,0.1970,0.1778
+"Random Forest
+(Supervised)","Benign + Attack
+(43 + 12 samples)",0.2771,0.8968,0.4234,0.9643

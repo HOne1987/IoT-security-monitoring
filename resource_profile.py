@@ -3,10 +3,18 @@ import numpy as np
 import psutil
 import os
 import time
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import IsolationForest
+import joblib
 from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score
 import matplotlib.pyplot as plt
+
+# ── LOAD PRE-TRAINED MODEL & SCALER ───────────────────────────────────────────
+MODEL_DIR = 'AI_Analyzer/models'
+print("Loading pre-trained Random Forest model...")
+model  = joblib.load(os.path.join(MODEL_DIR, 'random_forest_model.pkl'))
+model.verbose = 0
+model.n_jobs  = 1  # single-threaded for per-prediction latency measurement
+scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+print(f"✅ Model loaded from {MODEL_DIR}/")
 
 # ── LOAD & PREPARE ────────────────────────────────────────────────────────────
 print("Loading ToN-IoT dataset...")
@@ -33,28 +41,15 @@ print(f"🔄 After duration > 0 filter: {len(df_valid):,} valid flows retained")
 # ── WINDOW AGGREGATION (10-second windows) ────────────────────────────────────
 df_valid['window'] = (df_valid['ts'] / 10).astype(int)
 windowed = df_valid.groupby('window').agg(
-    flow_count=('src_pkts', 'count'),
-    duration=('duration', 'mean'),
+    flow_count=('duration', 'count'),
+    avg_duration=('duration', 'mean'),
     src_bytes=('src_bytes', 'sum'),
     dst_bytes=('dst_bytes', 'sum'),
     label=('label', 'max')
 ).reset_index()
 windowed['avg_bytes'] = (windowed['src_bytes'] + windowed['dst_bytes']) / windowed['flow_count']
 
-FEATURES = ['flow_count', 'duration', 'avg_bytes']
-
-# ── WARM-UP PHASE (first 60s of benign flows only) ────────────────────────────
-warmup_df = windowed[(windowed['window'] < 60) & (windowed['label'] == 0)]
-print(f"📊 Warm-up: {len(warmup_df)} benign windows (0-600s)")
-
-if len(warmup_df) == 0:
-    raise ValueError("No benign warm-up data available in the first 60 seconds")
-
-X_train = warmup_df[FEATURES].values
-scaler = StandardScaler()
-scaler.fit(X_train)
-model = IsolationForest(contamination=0.01, random_state=42)
-model.fit(scaler.transform(X_train))
+FEATURES = ['flow_count', 'avg_duration', 'avg_bytes']
 
 # ── INFERENCE HELPER ──────────────────────────────────────────────────────────
 proc = psutil.Process(os.getpid())
@@ -68,7 +63,7 @@ def measure_inference(rows_df):
         start = time.perf_counter()
         pred = model.predict(X_scaled)[0]
         latency = (time.perf_counter() - start) * 1000
-        score = model.decision_function(X_scaled)[0]
+        score = model.predict_proba(X_scaled)[0, 1]  # attack probability
         results.append({'cpu': cpu, 'ram': ram, 'latency': latency, 'score': score, 'pred': pred})
     return results
 
@@ -83,9 +78,9 @@ def aggregate(raw):
         'latency_mean': np.mean(lat), 'latency_std': np.std(lat),
     }
 
-# ── BASELINE MEASUREMENTS (benign after warm-up) ──────────────────────────────
-baseline_df = windowed[(windowed['window'] >= 6) & (windowed['label'] == 0)]
-print(f"📊 Baseline: {len(baseline_df)} benign windows (after 60s)")
+# ── BASELINE MEASUREMENTS (benign windows) ────────────────────────────────────
+baseline_df = windowed[windowed['label'] == 0]
+print(f"📊 Baseline: {len(baseline_df)} benign windows")
 
 baseline_raw = measure_inference(baseline_df)
 baseline_results = aggregate(baseline_raw)
@@ -101,13 +96,6 @@ if len(attack_df) == 0:
 else:
     attack_raw = measure_inference(attack_df)
     attack_results = aggregate(attack_raw)
-
-# ── TIME-TO-ALERT ─────────────────────────────────────────────────────────────
-attack_mask = df['label'] == 1
-if attack_mask.any():
-    first_attack_ts = df_valid[df_valid['label'] == 1]['ts'].min()
-    time_to_alert = first_attack_ts - 60
-    print(f"⚠️  First attack appears at T+{time_to_alert:.1f}s (after warm-up)")
 
 # ── PRINT RESULTS ─────────────────────────────────────────────────────────────
 print("\nResults:")
@@ -130,40 +118,37 @@ results_df = pd.DataFrame({
 })
 results_df.to_csv('resource_profile_results.csv', index=False)
 
-# ── THRESHOLD ANALYSIS ────────────────────────────────────────────────────────
-print("\nThreshold Analysis:")
-contamination_levels = [0.005, 0.01, 0.02, 0.05, 0.10, 0.15, 0.20]
+# ── THRESHOLD ANALYSIS (RF probability threshold sensitivity) ─────────────────
+# For RF the tunable parameter is the decision probability threshold
+# (default 0.5). Sweeping it shows the precision/recall/F1 trade-off.
+print("\nThreshold Analysis (RF probability threshold sweep):")
+prob_thresholds = [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
 threshold_rows = []
 
-eval_df = windowed[windowed['window'] >= 6].copy()
-y_true = eval_df['label'].values
-X_eval = scaler.transform(eval_df[FEATURES].values)
+X_all = scaler.transform(windowed[FEATURES].values)
+y_true_all = windowed['label'].values
+proba_all = model.predict_proba(X_all)[:, 1]
 
-for c in contamination_levels:
-    m = IsolationForest(contamination=c, random_state=42)
-    m.fit(scaler.transform(X_train))
-    preds = m.predict(X_eval)
-    scores = m.decision_function(X_eval)
-    y_pred = (preds == -1).astype(int)
-
-    prec = precision_score(y_true, y_pred, zero_division=0)
-    rec  = recall_score(y_true, y_pred, zero_division=0)
-    f1   = f1_score(y_true, y_pred, zero_division=0)
+for t in prob_thresholds:
+    y_pred = (proba_all >= t).astype(int)
+    prec = precision_score(y_true_all, y_pred, zero_division=0)
+    rec  = recall_score(y_true_all, y_pred, zero_division=0)
+    f1   = f1_score(y_true_all, y_pred, zero_division=0)
     try:
-        auc = roc_auc_score(y_true, -scores)
+        auc = roc_auc_score(y_true_all, proba_all)
     except ValueError:
         auc = float('nan')
 
-    marker = "✅ RECOMMENDED" if c == 0.05 else ""
-    print(f"  contamination={c} → F1={f1:.3f}, ROC-AUC={auc:.3f} {marker}")
-    threshold_rows.append({'contamination': c, 'precision': prec, 'recall': rec, 'f1_score': f1, 'roc_auc': auc})
+    marker = "✅ DEFAULT" if t == 0.50 else ""
+    print(f"  threshold={t:.2f} → Prec={prec:.3f}, Recall={rec:.3f}, F1={f1:.3f} {marker}")
+    threshold_rows.append({'contamination': t, 'precision': prec, 'recall': rec, 'f1_score': f1, 'roc_auc': auc})
 
 threshold_df = pd.DataFrame(threshold_rows)
 threshold_df.to_csv('threshold_analysis.csv', index=False)
 
 # ── PLOT ─────────────────────────────────────────────────────────────────────
 fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-fig.suptitle('Resource Profile: Isolation Forest on ToN-IoT Dataset', fontsize=14, fontweight='bold')
+fig.suptitle('Resource Profile: Random Forest on ToN-IoT Dataset', fontsize=14, fontweight='bold')
 
 categories = ['Baseline', 'Attack']
 
@@ -199,15 +184,17 @@ ax.set_xlabel('Latency (ms)')
 ax.set_ylabel('Frequency')
 ax.legend()
 
-# 4. Contamination sensitivity (F1 + ROC-AUC)
+# 4. RF probability threshold sensitivity
 ax = axes[1, 1]
 ax.plot(threshold_df['contamination'], threshold_df['f1_score'],
         marker='o', color='steelblue', linewidth=2, label='F1-Score')
-ax.plot(threshold_df['contamination'], threshold_df['roc_auc'],
-        marker='s', color='tomato', linewidth=2, linestyle='--', label='ROC-AUC')
-ax.axvline(x=0.01, color='gray', linestyle=':', linewidth=1, label='Default (0.01)')
-ax.set_title('Contamination Sensitivity')
-ax.set_xlabel('Contamination Parameter')
+ax.plot(threshold_df['contamination'], threshold_df['precision'],
+        marker='s', color='tomato', linewidth=2, linestyle='--', label='Precision')
+ax.plot(threshold_df['contamination'], threshold_df['recall'],
+        marker='^', color='seagreen', linewidth=2, linestyle=':', label='Recall')
+ax.axvline(x=0.50, color='gray', linestyle=':', linewidth=1, label='Default (0.50)')
+ax.set_title('RF Probability Threshold Sensitivity')
+ax.set_xlabel('Decision Threshold')
 ax.set_ylabel('Score')
 ax.set_ylim(0, 1.05)
 ax.legend()
