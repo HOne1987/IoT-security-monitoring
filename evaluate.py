@@ -5,6 +5,7 @@ import os
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import (confusion_matrix, precision_score, recall_score,
                              f1_score, roc_auc_score, roc_curve)
 import matplotlib.pyplot as plt
@@ -115,17 +116,18 @@ rf_pred  = rf.predict(X_test_rf)
 rf_score = rf.predict_proba(X_test_rf)[:, 1]
 print(f"  Random Forest: pre-trained model applied to chronological test set")
 
-# RF 5-fold cross-validation on the full labeled dataset
-# Provides a robust performance estimate across all temporal regions.
+# RF 5-fold cross-validation on the full labeled dataset.
+# Pipeline rescales inside each fold (no leakage). n_estimators=200 with
+# unconstrained depth for CV matches the supervisor's setup.
 print("  Running 5-fold stratified CV on full labeled dataset for RF...")
-cv = StratifiedKFold(n_splits=5, shuffle=False)
-X_all_rf = scaler_rf.transform(windowed[FEATURES].values)
-y_all    = windowed['label'].values
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+cv_pipe = Pipeline([
+    ('scaler', StandardScaler()),
+    ('rf', RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)),
+])
+y_all = windowed['label'].values
 cv_f1 = cross_val_score(
-    RandomForestClassifier(n_estimators=100, max_depth=10,
-                           min_samples_split=5, min_samples_leaf=2,
-                           random_state=42, n_jobs=-1),
-    X_all_rf, y_all, cv=cv, scoring='f1'
+    cv_pipe, windowed[FEATURES].values, y_all, cv=cv, scoring='f1'
 )
 rf_cv_mean, rf_cv_std = cv_f1.mean(), cv_f1.std()
 print(f"  RF 5-fold CV: F1 = {rf_cv_mean:.4f} ± {rf_cv_std:.4f}  "
