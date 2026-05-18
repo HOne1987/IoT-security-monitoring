@@ -1,24 +1,37 @@
 import pandas as pd
 import numpy as np
+import joblib
+import os
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.metrics import (confusion_matrix, precision_score, recall_score,
                              f1_score, roc_auc_score, roc_curve)
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-CYBER_CSV  = 'data/Network_dataset_1.csv'
-WINDOW_SIZE = 10   # seconds — matches live agent
-TEST_SIZE   = 0.3
+CYBER_CSV   = 'data/Network_dataset_1.csv'
+WINDOW_SIZE = 10       # seconds — matches live agent
 FEATURES    = ['flow_count', 'avg_duration', 'avg_bytes']
+MODEL_DIR   = 'AI_Analyzer/models'
 
 print("=" * 80)
 print("CHAPTER 4 FINAL EVALUATION: Three-Way Baseline Comparison")
-print("Dataset: Network_dataset_1.csv  |  10-second windows  |  70/30 split")
+print("Dataset: Network_dataset_1.csv  |  10-second windows  |  70/30 chronological split")
 print("=" * 80)
 
-# ── 1. LOAD & CLEAN ───────────────────────────────────────────────────────────
+# ── 1. LOAD PRE-TRAINED RF ────────────────────────────────────────────────────
+# RF was trained separately (train_random_forest.py) on a stratified split so
+# it has seen labeled attack examples. Evaluating it on the chronological
+# holdout tests temporal generalisation without refitting here.
+print("\n[0/5] Loading pre-trained RF model...")
+rf       = joblib.load(os.path.join(MODEL_DIR, 'random_forest_model.pkl'))
+scaler_rf = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+rf.verbose = 0
+rf.n_jobs  = 1
+print(f"  Loaded from {MODEL_DIR}/")
+
+# ── 2. LOAD & CLEAN ───────────────────────────────────────────────────────────
 print("\n[1/5] Loading dataset...")
 df = pd.read_csv(CYBER_CSV, low_memory=False)
 
@@ -32,7 +45,7 @@ df['duration'] = pd.to_numeric(df['duration'], errors='coerce').fillna(0)
 df_valid = df[df['duration'] > 0].copy()
 print(f"  {len(df):,} flows loaded, {len(df_valid):,} valid (duration > 0)")
 
-# ── 2. WINDOW AGGREGATION ─────────────────────────────────────────────────────
+# ── 3. WINDOW AGGREGATION ─────────────────────────────────────────────────────
 print(f"[2/5] Aggregating into {WINDOW_SIZE}-second windows...")
 df_valid['window'] = (df_valid['ts'] / WINDOW_SIZE).astype(int)
 
@@ -44,76 +57,95 @@ windowed = df_valid.groupby('window').agg(
     label=('label', 'max'),
 ).reset_index()
 windowed['avg_bytes'] = (windowed['src_bytes'] + windowed['dst_bytes']) / windowed['flow_count']
-windowed = windowed.dropna()
+windowed = windowed.dropna().sort_values('window').reset_index(drop=True)
 
 print(f"  {len(windowed):,} windows  |  "
       f"Benign: {(windowed['label']==0).sum():,}  Attack: {(windowed['label']==1).sum():,}")
 
-# ── 3. TRAIN / TEST SPLIT ─────────────────────────────────────────────────────
-print("[3/5] Splitting 70/30 stratified by label...")
-train_df, test_df = train_test_split(
-    windowed, test_size=TEST_SIZE, random_state=42, stratify=windowed['label']
-)
+# ── 4. CHRONOLOGICAL 70/30 SPLIT ─────────────────────────────────────────────
+# Attack windows are concentrated in the temporal tail of the ToN-IoT dataset
+# (rows 13238-13673 chronologically). The 70/30 split ensures:
+#   - Train: first 70% of windows — benign traffic, used to fit baselines
+#   - Test:  last 30% of windows  — includes all 436 attack windows
+# This mirrors real deployment: model trained on historical/labelled data,
+# evaluated on the most recent (unseen) traffic period.
+print("[3/5] Splitting 70/30 chronologically (first 70% train, last 30% test)...")
+n_train  = int(len(windowed) * 0.70)
+train_df = windowed.iloc[:n_train].copy()
+test_df  = windowed.iloc[n_train:].copy()
 
-X_train = train_df[FEATURES].values
 y_train = train_df['label'].values
-X_test  = test_df[FEATURES].values
 y_test  = test_df['label'].values
 
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled  = scaler.transform(X_test)
+# Scaler for the unsupervised baselines — fit on chronological training set
+scaler_live = StandardScaler()
+X_train_scaled = scaler_live.fit_transform(train_df[FEATURES].values)
+X_test_live    = scaler_live.transform(test_df[FEATURES].values)
 
-print(f"  Train: {len(X_train):,}  Test: {len(X_test):,}")
+# RF uses its own scaler (fitted during supervised training in train_random_forest.py)
+X_test_rf = scaler_rf.transform(test_df[FEATURES].values)
 
-# ── 4. FIT ALL THREE MODELS ───────────────────────────────────────────────────
-print("[4/5] Fitting models...")
+print(f"  Train: {len(train_df):,} windows  "
+      f"(Benign: {(y_train==0).sum():,}, Attack: {(y_train==1).sum():,})")
+print(f"  Test:  {len(test_df):,} windows  "
+      f"(Benign: {(y_test==0).sum():,}, Attack: {(y_test==1).sum():,})")
+
+# ── 5. FIT BASELINES + EVALUATE RF ───────────────────────────────────────────
+print("[4/5] Fitting baselines and running RF inference...")
 
 # --- Baseline 1: Random Threshold -------------------------------------------
-# Flags a window as attack if flow_count exceeds the 95th percentile of
-# training-set benign windows — the simplest possible anomaly heuristic.
 benign_train_fc = train_df.loc[y_train == 0, 'flow_count']
 threshold_val   = np.percentile(benign_train_fc, 95)
-thresh_pred  = (test_df['flow_count'].values > threshold_val).astype(int)
-thresh_score = test_df['flow_count'].values  # raw count as anomaly score
+thresh_pred     = (test_df['flow_count'].values > threshold_val).astype(int)
+thresh_score    = test_df['flow_count'].values
 print(f"  Random Threshold: flow_count > {threshold_val:.1f} (95th pctile of benign train)")
 
-# --- Baseline 2: Isolation Forest --------------------------------------------
-# Trained on the full training set (no warm-up); contamination=0.05 from
-# threshold sensitivity analysis in resource_profile.py.
+# --- Baseline 2: Isolation Forest -------------------------------------------
 iso = IsolationForest(contamination=0.05, random_state=42)
 iso.fit(X_train_scaled)
-iso_raw   = iso.predict(X_test_scaled)
+iso_raw   = iso.predict(X_test_live)
 iso_pred  = (iso_raw == -1).astype(int)
 # Negate: decision_function returns lower scores for anomalies, but
 # roc_auc_score expects higher scores for the positive class.
-iso_score = -iso.decision_function(X_test_scaled)
-print(f"  Isolation Forest: trained on {len(X_train):,} windows (unsupervised)")
+iso_score = -iso.decision_function(X_test_live)
+print(f"  Isolation Forest: trained on {len(train_df):,} windows (unsupervised)")
 
-# --- Model 3: Random Forest --------------------------------------------------
-# Supervised; trained on labeled windows that match the agent's Prometheus
-# exports (flow_count, avg_duration, avg_bytes).
-rf = RandomForestClassifier(
-    n_estimators=100, max_depth=10,
-    min_samples_split=5, min_samples_leaf=2,
-    random_state=42, n_jobs=-1,
+# --- Model 3: Random Forest (pre-trained, supervised) -----------------------
+rf_pred  = rf.predict(X_test_rf)
+rf_score = rf.predict_proba(X_test_rf)[:, 1]
+print(f"  Random Forest: pre-trained model applied to chronological test set")
+
+# RF 5-fold cross-validation on the full labeled dataset
+# Provides a robust performance estimate across all temporal regions.
+print("  Running 5-fold stratified CV on full labeled dataset for RF...")
+cv = StratifiedKFold(n_splits=5, shuffle=False)
+X_all_rf = scaler_rf.transform(windowed[FEATURES].values)
+y_all    = windowed['label'].values
+cv_f1 = cross_val_score(
+    RandomForestClassifier(n_estimators=100, max_depth=10,
+                           min_samples_split=5, min_samples_leaf=2,
+                           random_state=42, n_jobs=-1),
+    X_all_rf, y_all, cv=cv, scoring='f1'
 )
-rf.fit(X_train_scaled, y_train)
-rf_pred  = rf.predict(X_test_scaled)
-rf_score = rf.predict_proba(X_test_scaled)[:, 1]
-print(f"  Random Forest: trained on {len(X_train):,} windows (supervised)")
+rf_cv_mean, rf_cv_std = cv_f1.mean(), cv_f1.std()
+print(f"  RF 5-fold CV: F1 = {rf_cv_mean:.4f} ± {rf_cv_std:.4f}  "
+      f"(folds: {', '.join(f'{s:.4f}' for s in cv_f1)})")
 
-# ── 5. EVALUATE ───────────────────────────────────────────────────────────────
+# ── 6. EVALUATE ───────────────────────────────────────────────────────────────
 print("[5/5] Computing metrics...")
 
 def metrics(y_true, y_pred, y_score):
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+    fnr = fn / (fn + tp) if (fn + tp) > 0 else 0.0
     return {
-        'TP': tp, 'TN': tn, 'FP': fp, 'FN': fn,
+        'TP': int(tp), 'TN': int(tn), 'FP': int(fp), 'FN': int(fn),
         'Precision': precision_score(y_true, y_pred, zero_division=0),
         'Recall':    recall_score(y_true, y_pred, zero_division=0),
         'F1-Score':  f1_score(y_true, y_pred, zero_division=0),
         'ROC-AUC':   roc_auc_score(y_true, y_score),
+        'FPR':       fpr,
+        'FNR':       fnr,
     }
 
 m_thresh = metrics(y_test, thresh_pred, thresh_score)
@@ -125,23 +157,28 @@ print("\n" + "=" * 80)
 print("CHAPTER 4 — FINAL COMPARISON TABLE")
 print("=" * 80)
 
-header = f"{'Model':<28} {'Precision':>10} {'Recall':>10} {'F1-Score':>10} {'ROC-AUC':>10}"
+header = (f"{'Model':<32} {'Precision':>10} {'Recall':>10} "
+          f"{'F1-Score':>10} {'ROC-AUC':>10} {'FPR':>8} {'FNR':>8}")
 print(f"\n{header}")
-print("-" * 70)
+print("-" * 90)
 rows = [
-    ("Random Threshold (heuristic)", m_thresh),
+    ("Random Threshold (heuristic)",    m_thresh),
     ("Isolation Forest (unsupervised)", m_iso),
-    ("Random Forest (supervised)",     m_rf),
+    ("Random Forest (supervised)",      m_rf),
 ]
 for name, m in rows:
-    print(f"  {name:<26} {m['Precision']:>10.4f} {m['Recall']:>10.4f} "
-          f"{m['F1-Score']:>10.4f} {m['ROC-AUC']:>10.4f}")
+    print(f"  {name:<30} {m['Precision']:>10.4f} {m['Recall']:>10.4f} "
+          f"{m['F1-Score']:>10.4f} {m['ROC-AUC']:>10.4f} "
+          f"{m['FPR']:>8.4f} {m['FNR']:>8.4f}")
 
-print("\n  Confusion matrices:")
-print(f"  {'Model':<28}  TP     FP     FN     TN")
-print(f"  {'-'*62}")
+print(f"\n  RF 5-fold CV (full dataset, stratified): "
+      f"mean F1 = {rf_cv_mean:.4f} ± {rf_cv_std:.4f}")
+
+print("\n  Confusion matrices (TN / FP / FN / TP):")
+print(f"  {'Model':<32}  TN     FP     FN     TP")
+print(f"  {'-'*66}")
 for name, m in rows:
-    print(f"  {name:<28}  {m['TP']:5,}  {m['FP']:5,}  {m['FN']:5,}  {m['TN']:5,}")
+    print(f"  {name:<32}  {m['TN']:5,}  {m['FP']:5,}  {m['FN']:5,}  {m['TP']:5,}")
 
 print("\n" + "=" * 80)
 print("INTERPRETATION")
@@ -150,18 +187,19 @@ best_f1  = max(rows, key=lambda x: x[1]['F1-Score'])
 best_auc = max(rows, key=lambda x: x[1]['ROC-AUC'])
 print(f"\n  Best F1-Score:  {best_f1[0]}  ({best_f1[1]['F1-Score']:.4f})")
 print(f"  Best ROC-AUC:   {best_auc[0]}  ({best_auc[1]['ROC-AUC']:.4f})")
-print(f"\n  RF improvement over Isolation Forest:")
-print(f"    F1:      {m_iso['F1-Score']:.4f} → {m_rf['F1-Score']:.4f}  "
+print(f"\n  RF vs Isolation Forest:")
+print(f"    F1:        {m_iso['F1-Score']:.4f} → {m_rf['F1-Score']:.4f}  "
       f"(+{m_rf['F1-Score']-m_iso['F1-Score']:.4f})")
 print(f"    Precision: {m_iso['Precision']:.4f} → {m_rf['Precision']:.4f}  "
       f"(+{m_rf['Precision']-m_iso['Precision']:.4f})")
-print(f"\n  RF improvement over Random Threshold:")
-print(f"    F1:      {m_thresh['F1-Score']:.4f} → {m_rf['F1-Score']:.4f}  "
+print(f"\n  RF vs Random Threshold:")
+print(f"    F1:        {m_thresh['F1-Score']:.4f} → {m_rf['F1-Score']:.4f}  "
       f"(+{m_rf['F1-Score']-m_thresh['F1-Score']:.4f})")
 
 # ── SAVE CSV ──────────────────────────────────────────────────────────────────
 results_df = pd.DataFrame([
-    {'model': name, **{k: v for k, v in m.items() if k not in ('TP','TN','FP','FN')}}
+    {'model': name,
+     **{k: v for k, v in m.items() if k not in ('TP', 'TN', 'FP', 'FN')}}
     for name, m in rows
 ])
 results_df.to_csv('evaluation_final.csv', index=False)
@@ -170,10 +208,11 @@ print("\n  Saved: evaluation_final.csv")
 # ── PLOTS ─────────────────────────────────────────────────────────────────────
 fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 fig.suptitle('Chapter 4 — Final Baseline Comparison\n'
-             'Network_dataset_1.csv  |  10-second windows  |  70/30 stratified split',
+             'Network_dataset_1.csv  |  10-second windows  |  70/30 chronological split',
              fontsize=13, fontweight='bold')
 
-cms    = [confusion_matrix(y_test, p) for p in [thresh_pred, iso_pred, rf_pred]]
+cms    = [confusion_matrix(y_test, p, labels=[0, 1])
+          for p in [thresh_pred, iso_pred, rf_pred]]
 titles = ['Random Threshold\n(heuristic baseline)',
           'Isolation Forest\n(unsupervised baseline)',
           'Random Forest\n(supervised, production)']
@@ -228,26 +267,24 @@ ax.grid(axis='y', alpha=0.3)
 ax = axes[1, 2]
 ax.axis('off')
 summary_lines = [
-    "SUMMARY",
+    "SUMMARY  (chronological 70/30 split)",
     "",
-    f"Test set: {len(y_test):,} windows",
-    f"  Benign:  {(y_test==0).sum():,}",
-    f"  Attack:  {(y_test==1).sum():,}",
+    f"Train: {len(train_df):,}  (B:{(y_train==0).sum():,} A:{(y_train==1).sum():,})",
+    f"Test:  {len(test_df):,}  (B:{(y_test==0).sum():,} A:{(y_test==1).sum():,})",
     "",
-    "Model           Prec   Recall  F1",
+    f"RF 5-fold CV F1: {rf_cv_mean:.4f} ± {rf_cv_std:.4f}",
+    "",
+    f"{'Model':<20} Prec  Recall  F1",
 ]
 for name, m in rows:
     short = name.split()[0] + " " + name.split()[1]
     summary_lines.append(
         f"  {short[:18]:<18} {m['Precision']:.3f}  {m['Recall']:.3f}  {m['F1-Score']:.3f}"
     )
-summary_lines += [
-    "",
-    "ROC-AUC",
-]
+summary_lines += ["", "FPR  /  FNR"]
 for name, m in rows:
     short = name.split()[0] + " " + name.split()[1]
-    summary_lines.append(f"  {short[:18]:<18} {m['ROC-AUC']:.4f}")
+    summary_lines.append(f"  {short[:18]:<18} {m['FPR']:.4f} / {m['FNR']:.4f}")
 
 ax.text(0.05, 0.95, '\n'.join(summary_lines),
         transform=ax.transAxes, fontsize=9, verticalalignment='top',
