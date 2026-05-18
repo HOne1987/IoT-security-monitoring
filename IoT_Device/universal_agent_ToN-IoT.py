@@ -6,6 +6,7 @@ from prometheus_client import start_http_server, Gauge, Counter
 
 CYBER_CSV = '/app/data/Network_dataset_1.csv'
 PROMETHEUS_PORT = 8000
+START_WINDOW = 9500  # Skip to attack-heavy section for demo purposes (0 = full replay)
 
 # ── METRICS (Flow-level, not packet-level) ──
 FLOW_COUNT = Gauge('iot_cyber_flow_count', 'Active flows per window')
@@ -33,7 +34,13 @@ def run_emulation(df):
     # Group flows into 10-second windows (coarser granularity for flow data)
     df['window'] = (df['ts'] / 10).astype(int)
 
-    for window_id in df['window'].unique():
+    windows = sorted(df['window'].unique())
+    if START_WINDOW > 0:
+        windows = [w for w in windows if w >= START_WINDOW]
+        print(f"[Agent] START_WINDOW={START_WINDOW}: skipping to window {windows[0]} "
+              f"({len(windows)} windows remaining)")
+
+    for window_id in windows:
         window_df = df[df['window'] == window_id]
 
         # ✨ FIX: Filter out duration=0 flows (malformed/instant flows)
