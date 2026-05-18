@@ -6,7 +6,7 @@ from prometheus_client import start_http_server, Gauge, Counter
 
 CYBER_CSV = '/app/data/Network_dataset_1.csv'
 PROMETHEUS_PORT = 8000
-START_WINDOW = 9500  # Skip to attack-heavy section for demo purposes (0 = full replay)
+START_WINDOW = 13200  # 38 windows before attacks begin (~13,238) — attacks visible in ~38s
 
 # ── METRICS (Flow-level, not packet-level) ──
 FLOW_COUNT = Gauge('iot_cyber_flow_count', 'Active flows per window')
