@@ -40,6 +40,9 @@ try:
     with open(features_path, 'r') as f:
         features = [line.strip() for line in f.readlines()]
 
+    model.verbose = 0  # suppress per-prediction progress output
+    model.n_jobs  = 1  # single-threaded: lower latency for one-shot inference
+
     print(f"[INIT] ✓ Model loaded successfully", flush=True)
     print(f"[INIT] ✓ Scaler loaded successfully", flush=True)
     print(f"[INIT] ✓ Features: {features}", flush=True)
