@@ -11,14 +11,20 @@ from prometheus_client import start_http_server, Gauge
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # --- Configuration ---
-PROMETHEUS_URL = 'http://prometheus:9090/api/v1/query'
+PROMETHEUS_URL  = 'http://prometheus:9090/api/v1/query'
 UPDATE_INTERVAL = 5
-MODEL_DIR = 'models'
+MODEL_DIR       = 'models'
+ALERT_LOG_PATH  = 'time_to_alert.txt'
 
 # --- Metrics ---
-AI_ANOMALY_SCORE = Gauge('ai_anomaly_score', 'AI Anomaly Score (1 = Threat, 0 = Normal)')
-AI_ATTACK_PROBABILITY = Gauge('ai_attack_probability', 'Probability of Attack (0-1)')
-INFERENCE_LATENCY_MS = Gauge('ai_inference_latency_ms', 'Time to make prediction (milliseconds)')
+AI_ANOMALY_SCORE    = Gauge('ai_anomaly_score',       'AI Anomaly Score (1 = Threat, 0 = Normal)')
+AI_ATTACK_PROBABILITY = Gauge('ai_attack_probability','Probability of Attack (0-1)')
+INFERENCE_LATENCY_MS  = Gauge('ai_inference_latency_ms', 'Time to make prediction (milliseconds)')
+
+# --- Time-to-Alert State ---
+_first_attack_label_ts = None   # wall time when iot_cyber_attack_label first == 1
+_first_detection_ts    = None   # wall time when prediction first == 1
+_alert_logged          = False  # only report once per run
 
 # --- Load Pre-trained Model ---
 print("[INIT] Loading Random Forest model and scaler...", flush=True)
@@ -71,20 +77,30 @@ def fetch_metric(metric_name):
 
 
 def fetch_flow_metrics():
-    """Fetch flow-level metrics from Prometheus."""
-    flow_count = fetch_metric('iot_cyber_flow_count')
+    """Fetch flow-level metrics and ground-truth label from Prometheus."""
+    flow_count   = fetch_metric('iot_cyber_flow_count')
     avg_duration = fetch_metric('iot_cyber_avg_flow_duration_sec')
-    avg_bytes = fetch_metric('iot_cyber_avg_flow_bytes')
-    return [flow_count, avg_duration, avg_bytes]
+    avg_bytes    = fetch_metric('iot_cyber_avg_flow_bytes')
+    attack_label = fetch_metric('iot_cyber_attack_label')
+    return [flow_count, avg_duration, avg_bytes], attack_label
 
 
 def analyze():
-    """Run anomaly detection on current metrics."""
-    # Fetch metrics
-    metrics = fetch_flow_metrics()
+    """Run anomaly detection on current metrics and track time-to-alert."""
+    global _first_attack_label_ts, _first_detection_ts, _alert_logged
+
+    now = time.time()
+
+    # Fetch metrics + ground-truth label
+    metrics, attack_label = fetch_flow_metrics()
     flow_count, avg_duration, avg_bytes = metrics
 
-    # Skip if no data
+    # Record when the first attack window is seen in Prometheus
+    if attack_label == 1.0 and _first_attack_label_ts is None:
+        _first_attack_label_ts = now
+        print(f"[ALERT] Ground-truth attack label seen at t={now:.3f}", flush=True)
+
+    # Skip prediction if no flow data
     if all(m == 0.0 for m in metrics):
         return
 
@@ -102,18 +118,39 @@ def analyze():
     start_time = time.perf_counter()
 
     try:
-        # Get prediction (0 = normal, 1 = attack)
-        prediction = model.predict(metrics_scaled)[0]
-
-        # Get prediction probability (confidence)
-        prediction_proba = model.predict_proba(metrics_scaled)[0]
-        attack_probability = prediction_proba[1]  # Probability of class 1 (attack)
+        prediction         = model.predict(metrics_scaled)[0]
+        prediction_proba   = model.predict_proba(metrics_scaled)[0]
+        attack_probability = prediction_proba[1]
     except Exception as e:
         print(f"[ERROR] Model prediction failed: {e}", flush=True)
         return
 
     end_time = time.perf_counter()
     inference_time_ms = (end_time - start_time) * 1000
+
+    # Record when the detector first raises an alert
+    if prediction == 1 and _first_detection_ts is None:
+        _first_detection_ts = now
+        print(f"[ALERT] First RF detection at t={now:.3f}", flush=True)
+
+    # --- TIME-TO-ALERT ---
+    if (not _alert_logged
+            and _first_attack_label_ts is not None
+            and _first_detection_ts is not None):
+        tta = _first_detection_ts - _first_attack_label_ts
+        msg = (f"[ALERT] Time-to-alert: {tta:.2f} seconds from first attack window\n"
+               f"        Ground-truth seen : {_first_attack_label_ts:.3f}\n"
+               f"        First RF detection: {_first_detection_ts:.3f}")
+        print(msg, flush=True)
+        try:
+            with open(ALERT_LOG_PATH, 'w') as f:
+                f.write(f"time_to_alert_seconds: {tta:.4f}\n")
+                f.write(f"first_attack_label_ts: {_first_attack_label_ts:.3f}\n")
+                f.write(f"first_detection_ts:    {_first_detection_ts:.3f}\n")
+            print(f"[ALERT] Logged to {ALERT_LOG_PATH}", flush=True)
+        except Exception as e:
+            print(f"[ERROR] Could not write {ALERT_LOG_PATH}: {e}", flush=True)
+        _alert_logged = True
 
     # --- UPDATE METRICS ---
     AI_ANOMALY_SCORE.set(prediction)

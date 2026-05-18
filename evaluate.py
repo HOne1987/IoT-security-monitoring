@@ -297,6 +297,29 @@ plt.tight_layout()
 plt.savefig('evaluation_final.png', dpi=150, bbox_inches='tight')
 print("  Saved: evaluation_final.png")
 
+# ── THEORETICAL TIME-TO-ALERT ─────────────────────────────────────────────────
+# Worst-case pipeline latency from attack window START to detector alert:
+#   1. Window accumulation  : WINDOW_SIZE seconds until the window closes
+#   2. Scrape / poll delay  : UPDATE_INTERVAL seconds until detector queries Prometheus
+#   3. Inference latency    : mean RF inference time observed on the live detector
+# The three stages are sequential, so they sum directly.
+SCRAPE_INTERVAL      = 5.0    # seconds — UPDATE_INTERVAL in detector.py
+MEAN_INFERENCE_S     = 0.059  # seconds — mean observed on lab hardware (see detector logs)
+
+tta_window    = float(WINDOW_SIZE)
+tta_scrape    = SCRAPE_INTERVAL
+tta_inference = MEAN_INFERENCE_S
+tta_total     = tta_window + tta_scrape + tta_inference
+
+print("\n" + "=" * 80)
+print("THEORETICAL TIME-TO-ALERT (worst case)")
+print("=" * 80)
+print(f"  Window accumulation  : {tta_window:.3f} s  (WINDOW_SIZE = {WINDOW_SIZE}s)")
+print(f"  Scrape / poll delay  : {tta_scrape:.3f} s  (UPDATE_INTERVAL = {SCRAPE_INTERVAL}s)")
+print(f"  Mean inference       : {tta_inference:.3f} s  (observed on live detector)")
+print(f"  ─────────────────────────────────────────")
+print(f"  Worst-case total     : {tta_total:.3f} s")
+
 print("\n" + "=" * 80)
 print("EVALUATION COMPLETE")
 print("=" * 80)
