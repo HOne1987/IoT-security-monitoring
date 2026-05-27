@@ -8,3 +8,4 @@ data/*.csv
 
 # Runtime logs
 logs/
+AI_Analyzer/time_to_alert.txt
