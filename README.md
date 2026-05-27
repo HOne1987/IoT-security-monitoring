@@ -47,6 +47,24 @@ All three models evaluated on the same held-out 30 % test set (stratified, 70/30
 
 Sub-7 ms per-window inference is viable on commodity edge hardware. See [`resource_profile.py`](resource_profile.py) and [`resource_profile_results.csv`](resource_profile_results.csv).
 
+### Edge Deployment: Le Potato (ARM Cortex-A53, 2 GB RAM)
+
+The IoT edge agent was profiled natively on a LibreComputer Le Potato (aarch64, 4-core @ 1.4 GHz, 2 GB RAM) running Armbian to validate deployment on constrained hardware.
+
+![Resource Profile Comparison](resource_profile_comparison.png)
+
+| Metric | Le Potato (ARM A53) | i5-9600K (x86\_64) |
+|---|---|---|
+| Architecture | ARM Cortex-A53, 4-core | x86\_64, 6-core |
+| CSV startup time | ~37 s | ~2 s |
+| CPU — steady-state mean | 1.78 % | 4.24 % |
+| CPU — steady-state max | 3.01 % | ~6 % |
+| RAM — mean (RSS) | 723 MiB | 1,043 MiB |
+| RAM — max (RSS) | 725 MiB | 1,205 MiB |
+| OOM risk (2 GB device) | None (37 % used) | — |
+
+The ARM device uses **30 % less RAM** and **58 % less CPU** in steady-state than the lab machine. The only meaningful edge-device penalty is the 37-second startup cost for loading the 1 M-row dataset — a one-time overhead that would not apply in a production deployment backed by a stream or database. The Docker image builds natively on aarch64 without compilation errors. Profiling data: [`lepotato_stats.txt`](lepotato_stats.txt).
+
 ---
 
 ## Dataset
