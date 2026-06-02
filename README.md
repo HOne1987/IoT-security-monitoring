@@ -31,11 +31,11 @@ IoT Edge Node  ──►  Prometheus (scrape 5 s)  ──►  Grafana (dashboard
 
 | Model | Precision | Recall | F1-Score | ROC-AUC |
 |---|---|---|---|---|
-| Random Threshold (heuristic) | 0.3477 | 0.9237 | 0.5052 | 0.9754 |
-| Isolation Forest (unsupervised) | 0.3041 | 0.5038 | 0.3793 | 0.9416 |
-| **Random Forest (supervised)** | **0.9008** | **0.8321** | **0.8651** | **0.9898** |
+| Statistical Threshold (mean+2σ) | 0.7898 | 0.8876 | 0.8359 | 0.9846 |
+| Isolation Forest (unsupervised) | 0.6673 | 0.8142 | 0.7335 | 0.9703 |
+| **Random Forest (supervised)** | **0.9845** | **0.8761** | **0.9272** | **0.9971** |
 
-All three models evaluated on the same held-out 30 % test set (stratified, 70/30 split). See [`evaluate.py`](evaluate.py) and [`evaluation_final.csv`](evaluation_final.csv).
+All three models evaluated on a chronological 70/30 split (train: first 9,571 benign windows; test: last 4,103 windows including all 436 attack windows). The statistical threshold is `flow_count > mean + 2σ` of benign training windows (15.46 flows). See [`evaluate.py`](evaluate.py) and [`evaluation_final.csv`](evaluation_final.csv).
 
 ### Resource Overhead (RF on ToN-IoT, all windows)
 
@@ -78,7 +78,7 @@ The ARM device uses **30 % less RAM** and **58 % less CPU** in steady-state than
 | Windows after aggregation | 13,674 |
 | Benign / Attack split | ~96.8 % / 3.2 % |
 | Features used | `flow_count`, `avg_duration`, `avg_bytes` |
-| Train / Test split | 70 / 30 stratified |
+| Train / Test split | 70 / 30 chronological |
 
 Features match the three Prometheus metrics exported by the live agent (`iot_cyber_flow_count`, `iot_cyber_avg_flow_duration_sec`, `iot_cyber_avg_flow_bytes`), ensuring training and inference operate on identical representations.
 

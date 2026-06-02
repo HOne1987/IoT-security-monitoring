@@ -94,12 +94,12 @@ print(f"  Test:  {len(test_df):,} windows  "
 # ── 5. FIT BASELINES + EVALUATE RF ───────────────────────────────────────────
 print("[4/5] Fitting baselines and running RF inference...")
 
-# --- Baseline 1: Random Threshold -------------------------------------------
+# --- Baseline 1: Statistical Threshold (mean + 2σ of benign training) -------
 benign_train_fc = train_df.loc[y_train == 0, 'flow_count']
-threshold_val   = np.percentile(benign_train_fc, 95)
+threshold_val   = benign_train_fc.mean() + 2 * benign_train_fc.std()
 thresh_pred     = (test_df['flow_count'].values > threshold_val).astype(int)
 thresh_score    = test_df['flow_count'].values
-print(f"  Random Threshold: flow_count > {threshold_val:.1f} (95th pctile of benign train)")
+print(f"  Statistical threshold: {threshold_val:.2f} flows (mean + 2σ of benign training)")
 
 # --- Baseline 2: Isolation Forest -------------------------------------------
 iso = IsolationForest(contamination=0.05, random_state=42)
@@ -164,7 +164,7 @@ header = (f"{'Model':<32} {'Precision':>10} {'Recall':>10} "
 print(f"\n{header}")
 print("-" * 90)
 rows = [
-    ("Random Threshold (heuristic)",    m_thresh),
+    ("Statistical Threshold (mean+2σ)",  m_thresh),
     ("Isolation Forest (unsupervised)", m_iso),
     ("Random Forest (supervised)",      m_rf),
 ]
@@ -215,7 +215,7 @@ fig.suptitle('Chapter 4 — Final Baseline Comparison\n'
 
 cms    = [confusion_matrix(y_test, p, labels=[0, 1])
           for p in [thresh_pred, iso_pred, rf_pred]]
-titles = ['Random Threshold\n(heuristic baseline)',
+titles = ['Statistical Threshold\n(mean+2σ baseline)',
           'Isolation Forest\n(unsupervised baseline)',
           'Random Forest\n(supervised, production)']
 cmaps  = ['Oranges', 'Blues', 'Greens']
