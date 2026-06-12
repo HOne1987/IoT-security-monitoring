@@ -4,7 +4,7 @@ import joblib
 import os
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import (confusion_matrix, precision_score, recall_score,
                              f1_score, roc_auc_score, roc_curve)
@@ -18,7 +18,7 @@ MODEL_DIR   = 'AI_Analyzer/models'
 
 print("=" * 80)
 print("CHAPTER 4 FINAL EVALUATION: Three-Way Baseline Comparison")
-print("Dataset: Network_dataset_1.csv  |  10-second windows  |  70/30 chronological split")
+print("Dataset: Network_dataset_1.csv  |  10-second windows  |  70/30 stratified split (random_state=42)")
 print("=" * 80)
 
 # ── 1. LOAD PRE-TRAINED RF ────────────────────────────────────────────────────
@@ -63,33 +63,41 @@ windowed = windowed.dropna().sort_values('window').reset_index(drop=True)
 print(f"  {len(windowed):,} windows  |  "
       f"Benign: {(windowed['label']==0).sum():,}  Attack: {(windowed['label']==1).sum():,}")
 
-# ── 4. CHRONOLOGICAL 70/30 SPLIT ─────────────────────────────────────────────
-# Attack windows are concentrated in the temporal tail of the ToN-IoT dataset
-# (rows 13238-13673 chronologically). The 70/30 split ensures:
-#   - Train: first 70% of windows — benign traffic, used to fit baselines
-#   - Test:  last 30% of windows  — includes all 436 attack windows
-# This mirrors real deployment: model trained on historical/labelled data,
-# evaluated on the most recent (unseen) traffic period.
-print("[3/5] Splitting 70/30 chronologically (first 70% train, last 30% test)...")
-n_train  = int(len(windowed) * 0.70)
-train_df = windowed.iloc[:n_train].copy()
-test_df  = windowed.iloc[n_train:].copy()
+# ── 4. STRATIFIED 70/30 SPLIT (mirrors train_random_forest.py exactly) ───────
+# Identical parameters to train_random_forest.py: test_size=0.30,
+# random_state=42, stratify=label. This guarantees:
+#   - The RF is evaluated only on its genuine held-out set (zero overlap)
+#   - All three models are compared on the same test partition
+#   - Class balance is preserved in both halves (~3.2 % attack rate)
+print("[3/5] Splitting 70/30 stratified by label (random_state=42, mirrors train_random_forest.py)...")
+train_df, test_df = train_test_split(
+    windowed, test_size=0.30, random_state=42, stratify=windowed['label']
+)
+train_df = train_df.copy()
+test_df  = test_df.copy()
 
 y_train = train_df['label'].values
 y_test  = test_df['label'].values
 
-# Scaler for the unsupervised baselines — fit on chronological training set
+# Scaler for the unsupervised baselines — fit on training set, applied to test
 scaler_live = StandardScaler()
 X_train_scaled = scaler_live.fit_transform(train_df[FEATURES].values)
 X_test_live    = scaler_live.transform(test_df[FEATURES].values)
 
-# RF uses its own scaler (fitted during supervised training in train_random_forest.py)
+# RF uses its own scaler (fitted on the same stratified training set in train_random_forest.py)
 X_test_rf = scaler_rf.transform(test_df[FEATURES].values)
 
 print(f"  Train: {len(train_df):,} windows  "
       f"(Benign: {(y_train==0).sum():,}, Attack: {(y_train==1).sum():,})")
 print(f"  Test:  {len(test_df):,} windows  "
       f"(Benign: {(y_test==0).sum():,}, Attack: {(y_test==1).sum():,})")
+
+# Overlap check: RF training set must not intersect evaluate.py test set
+rf_train_windows   = set(train_df['window'])
+eval_test_windows  = set(test_df['window'])
+overlap_count      = len(rf_train_windows & eval_test_windows)
+print(f"  Overlap (RF train ∩ eval test): {overlap_count} windows  "
+      f"{'✅ ZERO — leakage-free' if overlap_count == 0 else '❌ LEAKAGE DETECTED'}")
 print(f"  ✅ All three models evaluated on identical test set: n={len(test_df):,} windows")
 
 # ── 5. FIT BASELINES + EVALUATE RF ───────────────────────────────────────────
@@ -115,7 +123,7 @@ print(f"  Isolation Forest: trained on {len(train_df):,} windows (unsupervised)"
 # --- Model 3: Random Forest (pre-trained, supervised) -----------------------
 rf_pred  = rf.predict(X_test_rf)
 rf_score = rf.predict_proba(X_test_rf)[:, 1]
-print(f"  Random Forest: pre-trained model applied to chronological test set")
+print(f"  Random Forest: pre-trained model applied to stratified test set")
 
 # RF 5-fold cross-validation on the full labeled dataset.
 # Pipeline rescales inside each fold (no leakage). n_estimators=200 with
@@ -211,7 +219,7 @@ print("\n  Saved: evaluation_final.csv")
 # ── PLOTS ─────────────────────────────────────────────────────────────────────
 fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 fig.suptitle('Chapter 4 — Final Baseline Comparison\n'
-             'Network_dataset_1.csv  |  10-second windows  |  70/30 chronological split',
+             'Network_dataset_1.csv  |  10-second windows  |  70/30 stratified split (random_state=42)',
              fontsize=13, fontweight='bold')
 
 cms    = [confusion_matrix(y_test, p, labels=[0, 1])
@@ -270,7 +278,7 @@ ax.grid(axis='y', alpha=0.3)
 ax = axes[1, 2]
 ax.axis('off')
 summary_lines = [
-    "SUMMARY  (chronological 70/30 split)",
+    "SUMMARY  (stratified 70/30 split, random_state=42)",
     "",
     f"Train: {len(train_df):,}  (B:{(y_train==0).sum():,} A:{(y_train==1).sum():,})",
     f"Test:  {len(test_df):,}  (B:{(y_test==0).sum():,} A:{(y_test==1).sum():,})",

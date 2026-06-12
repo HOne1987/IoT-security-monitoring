@@ -31,11 +31,11 @@ IoT Edge Node  ──►  Prometheus (scrape 5 s)  ──►  Grafana (dashboard
 
 | Model | Precision | Recall | F1-Score | ROC-AUC |
 |---|---|---|---|---|
-| Statistical Threshold (mean+2σ) | 0.7898 | 0.8876 | 0.8359 | 0.9846 |
-| Isolation Forest (unsupervised) | 0.6673 | 0.8142 | 0.7335 | 0.9703 |
-| **Random Forest (supervised)** | **0.9845** | **0.8761** | **0.9272** | **0.9971** |
+| Statistical Threshold (mean+2σ) | 0.4795 | 0.8931 | 0.6240 | 0.9754 |
+| Isolation Forest (unsupervised) | 0.3041 | 0.5038 | 0.3793 | 0.9416 |
+| **Random Forest (supervised)** | **0.9008** | **0.8321** | **0.8651** | **0.9898** |
 
-All three models evaluated on a chronological 70/30 split (train: first 9,571 benign windows; test: last 4,103 windows including all 436 attack windows). The statistical threshold is `flow_count > mean + 2σ` of benign training windows (15.46 flows). See [`evaluate.py`](evaluate.py) and [`evaluation_final.csv`](evaluation_final.csv).
+All three models evaluated on the same stratified 70/30 split (`random_state=42`), matching the split used to train the RF — ensuring zero overlap between RF training data and the test set. Train: 9,571 windows (9,266 benign, 305 attack); Test: 4,103 windows (3,972 benign, 131 attack). The statistical threshold is `flow_count > mean + 2σ` of benign training windows (15.44 flows). See [`evaluate.py`](evaluate.py) and [`evaluation_final.csv`](evaluation_final.csv).
 
 ### Resource Overhead (RF on ToN-IoT, all windows)
 
@@ -78,7 +78,7 @@ The ARM device uses **30 % less RAM** and **58 % less CPU** in steady-state than
 | Windows after aggregation | 13,674 |
 | Benign / Attack split | ~96.8 % / 3.2 % |
 | Features used | `flow_count`, `avg_duration`, `avg_bytes` |
-| Train / Test split | 70 / 30 chronological |
+| Train / Test split | 70 / 30 stratified (random_state=42) |
 
 Features match the three Prometheus metrics exported by the live agent (`iot_cyber_flow_count`, `iot_cyber_avg_flow_duration_sec`, `iot_cyber_avg_flow_bytes`), ensuring training and inference operate on identical representations.
 
