@@ -90,6 +90,7 @@ print(f"  Train: {len(train_df):,} windows  "
       f"(Benign: {(y_train==0).sum():,}, Attack: {(y_train==1).sum():,})")
 print(f"  Test:  {len(test_df):,} windows  "
       f"(Benign: {(y_test==0).sum():,}, Attack: {(y_test==1).sum():,})")
+print(f"  ✅ All three models evaluated on identical test set: n={len(test_df):,} windows")
 
 # ── 5. FIT BASELINES + EVALUATE RF ───────────────────────────────────────────
 print("[4/5] Fitting baselines and running RF inference...")
@@ -235,7 +236,7 @@ fpr_t, tpr_t, _ = roc_curve(y_test, thresh_score)
 fpr_i, tpr_i, _ = roc_curve(y_test, iso_score)
 fpr_r, tpr_r, _ = roc_curve(y_test, rf_score)
 ax.plot(fpr_t, tpr_t, color='darkorange', linewidth=2,
-        label=f'Random Threshold  (AUC={m_thresh["ROC-AUC"]:.3f})')
+        label=f'Statistical Threshold  (AUC={m_thresh["ROC-AUC"]:.3f})')
 ax.plot(fpr_i, tpr_i, color='steelblue', linewidth=2,
         label=f'Isolation Forest  (AUC={m_iso["ROC-AUC"]:.3f})')
 ax.plot(fpr_r, tpr_r, color='seagreen', linewidth=2,
@@ -254,7 +255,7 @@ x = np.arange(len(metric_names))
 w = 0.25
 vals = [[m[k] for k in metric_names] for _, m in rows]
 colors_bar = ['darkorange', 'steelblue', 'seagreen']
-labels_bar = ['Random Threshold', 'Isolation Forest', 'Random Forest']
+labels_bar = ['Statistical Threshold', 'Isolation Forest', 'Random Forest']
 for j, (v, c, l) in enumerate(zip(vals, colors_bar, labels_bar)):
     ax.bar(x + (j - 1) * w, v, w, label=l, color=c)
 ax.set_xticks(x)
