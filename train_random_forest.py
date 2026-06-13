@@ -150,11 +150,11 @@ print("  training_metadata.txt")
 # ── CONFUSION MATRIX PLOT ─────────────────────────────────────────────────────
 n_total = len(y_test)
 cm_data = [[tn, fp], [fn, tp]]
-cm_labels = [['TN', 'FP'], ['FN', 'TP']]
 
-fig, ax = plt.subplots(figsize=(5.5, 4.5))
+fig, ax = plt.subplots(figsize=(6.5, 4.5))
 sns.heatmap(
-    cm_data, annot=False, fmt='d', cmap='Blues', ax=ax, cbar=False,
+    cm_data, annot=False, cmap='Blues', ax=ax,
+    cbar_kws={'label': 'Count', 'shrink': 0.85},
     xticklabels=['Normal', 'Attack'],
     yticklabels=['Normal', 'Attack'],
     linewidths=0.5, linecolor='white',
@@ -169,15 +169,15 @@ ax.set_title(
 )
 
 norm = tn + fp + fn + tp
-for i, (row_vals, row_keys) in enumerate(zip(cm_data, cm_labels)):
-    for j, (val, key) in enumerate(zip(row_vals, row_keys)):
-        pct  = val / norm * 100
-        cell_max = max(tn, fp, fn, tp)
+cell_max = max(tn, fp, fn, tp)
+for i, row_vals in enumerate(cm_data):
+    for j, val in enumerate(row_vals):
+        pct   = val / norm * 100
         color = 'white' if val > cell_max * 0.5 else 'black'
         ax.text(j + 0.5, i + 0.38, f'{val:,}',
                 ha='center', va='center', fontsize=14, fontweight='bold', color=color)
         ax.text(j + 0.5, i + 0.65, f'({pct:.1f} %)',
-                ha='center', va='center', fontsize=9, color=color)
+                ha='center', va='center', fontsize=9, fontweight='bold', color=color)
 
 plt.tight_layout()
 plt.savefig('confusion_matrix_rf.png', dpi=300, bbox_inches='tight')
