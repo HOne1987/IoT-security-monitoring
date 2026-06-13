@@ -1,6 +1,6 @@
 Random Forest Training Metadata
 ==================================================
-Training date: 2026-05-16 22:49:30.624026
+Training date: 2026-06-13 15:48:28.367594
 Dataset: data/Network_dataset_1.csv
 Window size: 10s
 Features: flow_count, avg_duration, avg_bytes

@@ -4,6 +4,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, roc_auc_score
+import matplotlib.pyplot as plt
+import seaborn as sns
 import joblib
 import os
 
@@ -144,6 +146,43 @@ print("  random_forest_model.pkl")
 print("  scaler.pkl")
 print("  features.txt")
 print("  training_metadata.txt")
+
+# ── CONFUSION MATRIX PLOT ─────────────────────────────────────────────────────
+n_total = len(y_test)
+cm_data = [[tn, fp], [fn, tp]]
+cm_labels = [['TN', 'FP'], ['FN', 'TP']]
+
+fig, ax = plt.subplots(figsize=(5.5, 4.5))
+sns.heatmap(
+    cm_data, annot=False, fmt='d', cmap='Blues', ax=ax, cbar=False,
+    xticklabels=['Normal', 'Attack'],
+    yticklabels=['Normal', 'Attack'],
+    linewidths=0.5, linecolor='white',
+)
+ax.xaxis.set_label_position('top')
+ax.xaxis.tick_top()
+ax.set_xlabel('Predicted Label', fontsize=11, labelpad=8)
+ax.set_ylabel('True Label', fontsize=11)
+ax.set_title(
+    f'Random Forest Detector — Confusion Matrix\n(ToN-IoT, $n$ = {n_total:,})',
+    fontsize=12, fontweight='bold', pad=14,
+)
+
+norm = tn + fp + fn + tp
+for i, (row_vals, row_keys) in enumerate(zip(cm_data, cm_labels)):
+    for j, (val, key) in enumerate(zip(row_vals, row_keys)):
+        pct  = val / norm * 100
+        cell_max = max(tn, fp, fn, tp)
+        color = 'white' if val > cell_max * 0.5 else 'black'
+        ax.text(j + 0.5, i + 0.38, f'{val:,}',
+                ha='center', va='center', fontsize=14, fontweight='bold', color=color)
+        ax.text(j + 0.5, i + 0.65, f'({pct:.1f} %)',
+                ha='center', va='center', fontsize=9, color=color)
+
+plt.tight_layout()
+plt.savefig('confusion_matrix_rf.png', dpi=300, bbox_inches='tight')
+plt.close()
+print("  confusion_matrix_rf.png")
 
 print("\n" + "=" * 80)
 print("TRAINING COMPLETE — model ready for deployment in detector.py")
