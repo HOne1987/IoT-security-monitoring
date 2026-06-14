@@ -51,19 +51,20 @@ Sub-7 ms per-window inference is viable on commodity edge hardware. See [`resour
 
 The IoT edge agent was profiled natively on a LibreComputer Le Potato (aarch64, 4-core @ 1.4 GHz, 2 GB RAM) running Armbian to validate deployment on constrained hardware.
 
-![Resource Profile Comparison](resource_profile_comparison.png)
+![Edge Agent Operational Stability — Le Potato](resource_profile_comparison.png)
 
-| Metric | Le Potato (ARM A53) | i5-9600K (x86\_64) |
-|---|---|---|
-| Architecture | ARM Cortex-A53, 4-core | x86\_64, 6-core |
-| CSV startup time | ~37 s | ~2 s |
-| CPU — steady-state mean | 1.78 % | 4.24 % |
-| CPU — steady-state max | 3.01 % | ~6 % |
-| RAM — mean (RSS) | 723 MiB | 1,043 MiB |
-| RAM — max (RSS) | 725 MiB | 1,205 MiB |
-| OOM risk (2 GB device) | None (37 % used) | — |
+| Metric | Le Potato (ARM Cortex-A53) |
+|---|---|
+| Architecture | ARM Cortex-A53, 4-core @ 1.4 GHz |
+| OS | Armbian (Debian, aarch64) |
+| CSV startup time | ~37 s (one-time, 1 M-row dataset) |
+| CPU — steady-state mean | 1.78 % of one core |
+| CPU — steady-state max | 3.01 % of one core |
+| RAM — mean (RSS) | 723 MiB |
+| RAM — max (RSS) | 725 MiB |
+| OOM risk (2 GB device) | None (37 % used) |
 
-The ARM device uses **30 % less RAM** and **58 % less CPU** in steady-state than the lab machine. The only meaningful edge-device penalty is the 37-second startup cost for loading the 1 M-row dataset — a one-time overhead that would not apply in a production deployment backed by a stream or database. The Docker image builds natively on aarch64 without compilation errors. Profiling data: [`lepotato_stats.txt`](lepotato_stats.txt).
+CPU remained below 3.01 % of one core and RAM was stable at ~723 MiB across a 5-minute continuous stream (n = 60 samples at 5 s intervals) — well within the 2 GB device limit. The only meaningful startup penalty is the 37-second CSV load time, a one-time overhead that would not apply in a production deployment backed by a stream or database. The Docker image builds natively on aarch64 without compilation errors. Profiling data: [`lepotato_stats.txt`](lepotato_stats.txt).
 
 ---
 
@@ -140,9 +141,10 @@ python resource_profile.py             # CPU/RAM/latency analysis, saves resourc
 │   └── grafana/                       # Auto-provisioned data source + dashboard
 ├── data/
 │   └── Network_dataset_1.csv          # ToN-IoT network flows (gitignored)
-├── train_random_forest.py             # Model training script
+├── train_random_forest.py             # Model training script + confusion matrix plot
 ├── evaluate.py                        # Chapter 4 baseline comparison
 ├── resource_profile.py                # CPU / RAM / latency profiling
+├── lepotato_profile_plot.py           # Le Potato edge stability plot
 ├── random_forest_train_test_split.py  # IF vs RF resource comparison
 ├── docker-compose.yml
 └── evaluation_final.{csv,png}         # Results
